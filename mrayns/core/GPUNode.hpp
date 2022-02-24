@@ -5,10 +5,14 @@
 
 #include "PageTable.hpp"
 #include <vector>
+MRAYNS_BEGIN
+/**
+ * @ Used for render task on GPU and not used for codec
+ */
 class GPUNode{
   public:
-    GPUNode& getInstance();
-    void setGPUIndex(int index);
+    explicit GPUNode(int index);
+
     int getGPUIndex() const;
 
     enum OperationType{
@@ -36,7 +40,7 @@ class GPUNode{
      */
     PageTable& getPageTable();
   private:
-    GPUNode();
 
     int gpu_index;
 };
+MRAYNS_END

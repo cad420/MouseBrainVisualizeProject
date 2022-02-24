@@ -4,6 +4,7 @@
 #pragma once
 
 #include "Volume.hpp"
+MRAYNS_BEGIN
 class PageTable{
   public:
 
@@ -23,3 +24,4 @@ class PageTable{
   private:
 
 };
+MRAYNS_END

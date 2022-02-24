@@ -5,6 +5,7 @@
 #include "Volume.hpp"
 #include "../extension/VolumeBlockProviderInterface.hpp"
 #include <memory>
+MRAYNS_BEGIN
 /**
  *
  */
@@ -12,6 +13,9 @@ class BlockVolumeManager{
   public:
     using BlockIndex = Volume::BlockIndex;
 
+    /**
+     * Single instance for a program
+     */
     static BlockVolumeManager& getInstance();
 
     void init(std::unique_ptr<IVolumeBlockProviderInterface>&& provider);
@@ -36,4 +40,8 @@ class BlockVolumeManager{
 
   private:
     BlockVolumeManager();
+
+    std::vector<uint8_t> storage;
+    std::unique_ptr<IVolumeBlockProviderInterface> provider;
 };
+MRAYNS_END

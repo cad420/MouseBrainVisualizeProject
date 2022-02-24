@@ -4,15 +4,18 @@
 #pragma once
 #include <map>
 #include <vector>
+#include "../common/Define.hpp"
+MRAYNS_BEGIN
 /**
  * @brief Class for store cpu and gpu information.
  * Not provide any schedule idea.
  */
 class HostNode{
   public:
-    HostNode& getInstance();
+    //single instance for one program
+    static HostNode& getInstance();
 
-    void setGPUNum();
+    void setGPUNum(int num);
     int getGPUNum() const;
     void getCPUMemInfo(int& total,int& free);//GB
     void getGPUMemInfo(int& total,int& free);
@@ -44,3 +47,4 @@ class HostNode{
 
     std::map<TaskDesc,GPUTask> gpu_tasks;
 };
+MRAYNS_END
