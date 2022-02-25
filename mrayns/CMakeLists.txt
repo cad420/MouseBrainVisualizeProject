@@ -22,6 +22,7 @@ target_link_libraries(
         MRAYNS_CORE
         PUBLIC
         spdlog::spdlog
+        glm::glm
 )
 
 target_compile_features(

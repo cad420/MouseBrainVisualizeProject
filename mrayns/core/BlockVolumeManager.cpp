@@ -26,14 +26,14 @@ const Volume &BlockVolumeManager::getVolume() const
 {
     return this->provider->getVolume();
 }
-void *BlockVolumeManager::getVolumeBlock(BlockVolumeManager::BlockIndex blockIndex, bool sync)
+void *BlockVolumeManager::getVolumeBlock(const BlockVolumeManager::BlockIndex& blockIndex, bool sync)
 {
     assert(provider.get());
 
     provider->getVolumeBlock(storage.data(),blockIndex);
     return storage.data();
 }
-void *BlockVolumeManager::getVolumeBlockAndLock(BlockVolumeManager::BlockIndex blockIndex, bool sync)
+void *BlockVolumeManager::getVolumeBlockAndLock(const BlockVolumeManager::BlockIndex& blockIndex, bool sync)
 {
     return nullptr;
 }

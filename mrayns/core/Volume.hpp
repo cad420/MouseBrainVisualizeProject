@@ -4,7 +4,9 @@
 
 #pragma once
 #include <string>
+#include <type_traits>
 #include "../common/Define.hpp"
+#include "../common/Hash.hpp"
 MRAYNS_BEGIN
 /**
  * @brief Just some information about the volume, no real volume data stored.
@@ -41,4 +43,15 @@ class Volume{
     float volume_space_x{0.f},volume_space_y{0.f},volume_space_z{0.f};
 };
 
+
+
 MRAYNS_END
+
+namespace std{
+    template <>
+    struct hash<mrayns::Volume::BlockIndex>{
+        size_t operator()(const mrayns::Volume::BlockIndex& block_index){
+            return mrayns::hash(block_index.x,block_index.y,block_index.z,block_index.w);
+        }
+    };
+}

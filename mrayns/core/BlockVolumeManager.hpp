@@ -26,9 +26,9 @@ class BlockVolumeManager{
 
     const Volume& getVolume() const;
 
-    void* getVolumeBlock(BlockIndex blockIndex,bool sync = true);
+    void* getVolumeBlock(const BlockIndex& blockIndex,bool sync = true);
 
-    void* getVolumeBlockAndLock(BlockIndex blockIndex,bool sync = true);
+    void* getVolumeBlockAndLock(const BlockIndex& blockIndex,bool sync = true);
 
     bool lock(void* ptr);
 
