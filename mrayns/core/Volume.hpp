@@ -24,6 +24,9 @@ class Volume{
     };
     struct BlockIndex{
         int x,y,z,w;
+        bool operator==(const BlockIndex& b) const{
+            return x==b.x && y==b.y && z==b.z && w==b.w;
+        }
     };
 
     std::string getVolumeName() const {return name;}
@@ -50,7 +53,7 @@ MRAYNS_END
 namespace std{
     template <>
     struct hash<mrayns::Volume::BlockIndex>{
-        size_t operator()(const mrayns::Volume::BlockIndex& block_index){
+        size_t operator()(const mrayns::Volume::BlockIndex& block_index) const{
             return mrayns::hash(block_index.x,block_index.y,block_index.z,block_index.w);
         }
     };

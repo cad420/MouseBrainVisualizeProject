@@ -40,7 +40,7 @@ class GPUNode{
      */
     PageTable& getPageTable();
   private:
-
+    PageTable page_table;
     int gpu_index;
 };
 MRAYNS_END

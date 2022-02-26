@@ -12,5 +12,9 @@ int GPUNode::getGPUIndex() const
 {
     return 0;
 }
+PageTable &GPUNode::getPageTable()
+{
+    return page_table;
+}
 
 MRAYNS_END

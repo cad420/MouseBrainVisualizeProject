@@ -73,6 +73,8 @@ int main(int argc,char** argv){
 
     GPUResource gpu_resource(0);
 
+    GPUNode gpu_node(0);
+
     auto volume_renderer = VolumeRenderer::create(gpu_resource);
 
     const int frame_w = 1280;
@@ -86,11 +88,7 @@ int main(int argc,char** argv){
 
     auto volume_render = [&](){
 
-      //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
-      //分割任务算法可以根据不同渲染器的类别应用
-      //暂时不考虑多个GPU数量
-
-      //get current camera view and projection matrix
+        //get current camera view and projection matrix
         auto vp = Matrix4f();
         Frustum view_frustum{};
         GeometryHelper::ExtractViewFrustumPlanesFromMatrix(vp,view_frustum);
@@ -99,12 +97,21 @@ int main(int argc,char** argv){
         auto missed_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
         int missed_block_count = missed_blocks.size();
         LOG_INFO("volume render missed block count: {}",missed_block_count);
+
+        //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
+        //分割任务算法可以根据不同渲染器的类别应用
+        //暂时不考虑多个GPU数量
+        //use GPUNode and PageTable here
+
         /**
          * 需要多线程获取VolumeBlock数据 但是需要等所有任务都结束后再继续渲染
          */
         std::unordered_map<Volume::BlockIndex,void*> blocks;
         std::mutex mtx;
         auto decode_task = [&](int thread_idx,Volume::BlockIndex block_index){
+            /**
+             * 这里获取数据的任务调度由BlockVolumeManager具体负责
+             */
             auto ptr = block_volume_manager.getVolumeBlockAndLock(block_index);
             std::lock_guard<std::mutex> lk(mtx);
             blocks[block_index] = ptr;
@@ -114,11 +121,58 @@ int main(int argc,char** argv){
         //todo upload blocks into GPUResource, may use multi-thread to accelerate
         //在这里只需要将数据块上传到相应的GPUResource即可
 
+        auto& page_table = gpu_node.getPageTable();
 
+        //upload resource sync
+        for(auto& block:blocks){
+            page_table.lock(block.first);
+            PageTable::EntryItem table_entry;
+            bool cached = page_table.getEntryItem(block.first,table_entry);
+            if(cached) continue;
+            gpu_resource.uploadResource(GPUResource::Texture,table_entry,block.second,volume.getBlockSize(),true);
+            page_table.release(table_entry);
+            page_table.update(table_entry,block.first);
+        }
+        //upload resource async
+//        std::vector<std::pair<PageTable::EntryItem,PageTable::ValueItem>> book;
+//        for(auto& block:blocks){
+//          page_table.lock(block.first);
+//          PageTable::EntryItem table_entry;
+//          bool cached = page_table.getEntryItem(block.first,table_entry);
+//          book.emplace_back({table_entry,block.first});
+//          if(cached) continue;
+//          gpu_resource.uploadResource(GPUResource::Texture,table_entry,block.second,volume.getBlockSize(),false);
+//        }
+//        gpu_resource.flush();
+//        page_table.releaseAll();
+//        for(auto& b:book) page_table.update(b.first,b.second);
 
         volume_renderer->render(camera);
 
+        //unlock the blocks
+        {
+            int unlock_failed_count = 0;
+            for (const auto &block : blocks)
+            {
+                if (!block_volume_manager.unlock(block.second))
+                {
+                    unlock_failed_count++;
+                    LOG_ERROR("unlock block failed: {} {} {} {}", block.first.x, block.first.y, block.first.z,
+                              block.first.w);
+                }
+            }
+            if (unlock_failed_count > 0)
+            {
+                LOG_ERROR("{} blocks failed to unlock", unlock_failed_count);
+            }
+        }
+
         auto& ret = volume_renderer->getFrameBuffers().getColors();
+
+        /**
+         * 在这里如果是切分任务渲染的话 需要对渲染结果进行融合评级
+         */
+
         return ret;
     };
     bool exit = false;

@@ -37,9 +37,15 @@ class GPUResource{
 
     ResourceDesc getGPUResourceDesc(ResourceType type) const;
 
-    void uploadResource(ResourceType type,PageTable::EntryItem entryItem,void* src,size_t size);
 
-    void downloadResource(ResourceType type,PageTable::EntryItem entryItem,void* dst,size_t size);
+    /**
+     * @param sync if false must call flush to finish task
+     */
+    void uploadResource(ResourceType type,PageTable::EntryItem entryItem,void* src,size_t size,bool sync);
+
+    void flush();
+
+    void downloadResource(ResourceType type,PageTable::EntryItem entryItem,void* dst,size_t size,bool sync);
 
     bool registerRenderer(Renderer*);
 

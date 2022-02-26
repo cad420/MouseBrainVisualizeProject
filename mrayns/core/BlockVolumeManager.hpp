@@ -34,6 +34,7 @@ class BlockVolumeManager{
 
     void waitForLock(void* ptr);
 
+    //lock is not always successful because may locked by internal waiting for data from provider
     bool unlock(void* ptr);
 
     void waitForUnlock(void* ptr);
