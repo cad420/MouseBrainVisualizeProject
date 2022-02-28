@@ -17,12 +17,17 @@ class VolumeBlockTree{
     using BlockIndex = Volume::BlockIndex;
 
     void buildTree(const Volume& volume);
+
     void clearTree();
+
     const Volume& getVolume() const;
 
-    std::vector<BlockIndex> computeIntersectBlock(const Frustum& frustum);
+    std::vector<BlockIndex> computeIntersectBlock(const Frustum& frustum,int level = 0);
 
-    std::vector<BlockIndex> computeIntersectBlock(const BoundBox& box);
+    /**
+     * 切片可以是特殊的BoundBox
+     */
+    std::vector<BlockIndex> computeIntersectBlock(const BoundBox& box,int level = 0);
 
   private:
     std::unique_ptr<VolumeBlockTreeImpl> impl;

@@ -36,4 +36,6 @@ using Matrix4d = glm::dmat4;
 using RGBA = glm::vec<4,uint8_t>;
 using RGB = glm::vec<3,uint8_t>;
 
+using namespace glm;
+
 MRAYNS_END

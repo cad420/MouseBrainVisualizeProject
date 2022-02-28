@@ -15,6 +15,10 @@ class GPUNode{
 
     int getGPUIndex() const;
 
+    /**
+     * Write means it should modify data in the GPU.
+     * Read means it will not need new data to upload to GPU.
+     */
     enum OperationType{
         Read,Write
     };

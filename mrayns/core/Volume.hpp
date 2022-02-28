@@ -14,6 +14,8 @@ MRAYNS_BEGIN
  */
 class Volume{
   public:
+    static constexpr const char* EmptyVolume = "empty-volume";
+    static constexpr const char* AnonymousVolume = "anonymous-volume";
     enum VoxelType{
         UNKNOWN,
         INT8,UINT8,
@@ -23,7 +25,10 @@ class Volume{
         FLOAT32,FLOAT64
     };
     struct BlockIndex{
-        int x,y,z,w;
+        int x{-1},y{-1},z{-1},w{0};
+        bool isValid() const{
+            return x>=0 && y>=0 && z>=0 && w>=0;
+        }
         bool operator==(const BlockIndex& b) const{
             return x==b.x && y==b.y && z==b.z && w==b.w;
         }
@@ -37,13 +42,23 @@ class Volume{
     void getVolumeDim(int&x,int&y,int&z) const { x = volume_dim_x; y = volume_dim_y; z = volume_dim_z;}
     void getVolumeSpace(float&x,float&y,float&z) const { x = volume_space_x; y = volume_space_y; z = volume_space_z;}
     int getBlockSize() const { return block_length * block_length * block_length;}
-
+    bool isValid() const { return name != EmptyVolume && voxel_type != UNKNOWN;}//could inspect more like dim and space
+    int getMaxLod() const { return max_lod; }
+    void clear(){
+        name = EmptyVolume;
+        block_length = padding = 0;
+        voxel_type = UNKNOWN;
+        volume_dim_x = volume_dim_y = volume_dim_z = 0;
+        volume_space_x = volume_space_y = volume_space_z = 0.f;
+        max_lod = 0;
+    }
   public:
-    std::string name{};
+    std::string name{EmptyVolume};
     int block_length{0},padding{0};
     VoxelType voxel_type{UNKNOWN};
     int volume_dim_x{0},volume_dim_y{0},volume_dim_z{0};
     float volume_space_x{0.f},volume_space_y{0.f},volume_space_z{0.f};
+    int max_lod{0};
 };
 
 

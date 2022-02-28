@@ -18,18 +18,43 @@ class BlockVolumeManager{
      */
     static BlockVolumeManager& getInstance();
 
-    void init(std::unique_ptr<IVolumeBlockProviderInterface>&& provider);
+    void setProvider(std::unique_ptr<IVolumeBlockProviderInterface>&& provider);
+
+    /**
+     * @brief This should call after setProvider otherwise will rise exception.
+     * It will malloc memory for storage.
+     *
+     */
+    void init();
 
     void clear();
+
+    void destroy();
 
     bool isValid() const;
 
     const Volume& getVolume() const;
 
+    /**
+     * @return if store the block buffer return true otherwise false
+     */
+    bool query(const BlockIndex& blockIndex);
+
+    /**
+     * @brief get volume block ptr
+     * @sync meanings wait for decode result, so it also may wait for some internal locks
+     * @return nullptr represent not find the volume block or no empty memory to load it
+     */
     void* getVolumeBlock(const BlockIndex& blockIndex,bool sync = true);
 
-    void* getVolumeBlockAndLock(const BlockIndex& blockIndex,bool sync = true);
+    /**
+     *
+     */
+    void* getVolumeBlockAndLock(const BlockIndex& blockIndex);
 
+    /**
+     * @brief lock the ptr meanings the ptr in the internal will not modified
+     */
     bool lock(void* ptr);
 
     void waitForLock(void* ptr);
@@ -39,10 +64,14 @@ class BlockVolumeManager{
 
     void waitForUnlock(void* ptr);
 
+
   private:
     BlockVolumeManager();
 
-    std::vector<uint8_t> storage;
+    struct BlockVolumeManagerImpl;
+    std::unique_ptr<BlockVolumeManagerImpl> impl;
     std::unique_ptr<IVolumeBlockProviderInterface> provider;
+    Volume volume;
+
 };
 MRAYNS_END

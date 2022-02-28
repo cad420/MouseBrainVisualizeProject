@@ -3,28 +3,28 @@
 //
 #include "PageTable.hpp"
 MRAYNS_BEGIN
-void PageTable::update(PageTable::EntryItem, PageTable::ValueItem)
+void PageTable::update(EntryItem, ValueItem)
 {
 }
-bool PageTable::query(PageTable::ValueItem, PageTable::EntryItem &)
+bool PageTable::query(ValueItem, EntryItem &)
 {
     return false;
 }
-bool PageTable::lock(Volume::BlockIndex)
+bool PageTable::lock(EntryItem)
 {
     return false;
 }
-bool PageTable::getEntryItem(PageTable::ValueItem, PageTable::EntryItem &)
+bool PageTable::getEntryItem(ValueItem, EntryItem &)
 {
     return false;
 }
-bool PageTable::release(PageTable::EntryItem)
+void PageTable::release(PageTable::EntryItem)
 {
-    return false;
+
 }
-bool PageTable::releaseAll()
+void PageTable::releaseAll()
 {
-    return false;
+
 }
 
 MRAYNS_END

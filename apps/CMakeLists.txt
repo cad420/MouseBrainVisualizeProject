@@ -1,2 +1,4 @@
 
 add_subdirectory(LargeVolumeVis)
+
+add_subdirectory(LargeVolumeSliceVis)

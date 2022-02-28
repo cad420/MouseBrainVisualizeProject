@@ -24,7 +24,9 @@ class IVolumeBlockProviderInterface{
     virtual const Volume& getVolume() const = 0;
 
     /**
+     * @brief This is a sycn function that will return until decoding finish
      * @param dst caller should pass valid memory ptr to receive data.
+     *
      */
     virtual void getVolumeBlock(void* dst,BlockIndex blockIndex) = 0;
 

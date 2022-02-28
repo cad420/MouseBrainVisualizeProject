@@ -11,6 +11,25 @@ struct BoundBox{
     Vector3f max_p;
 };
 
+inline BoundBox UnionBoundBox(const BoundBox& b1,const BoundBox& b2){
+    return BoundBox{
+        {
+            std::min(b1.min_p.x,b2.min_p.x),
+            std::min(b1.min_p.y,b2.min_p.y),
+            std::min(b1.min_p.z,b2.min_p.z)
+        },
+        {
+            std::max(b1.max_p.x,b2.max_p.x),
+            std::max(b1.max_p.y,b2.max_p.y),
+            std::max(b1.max_p.z,b2.max_p.z)
+        }
+    };
+}
+template <typename... T>
+BoundBox UnionBoundBoxes(const BoundBox& b1,const BoundBox& b2,T&&... others){
+    return UnionBoundBoxes(UnionBoundBox(b1,b2),others...);
+}
+
 enum class BoxVisibility{
     Invisible,
     Intersecting,

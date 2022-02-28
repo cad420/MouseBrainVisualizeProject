@@ -12,6 +12,8 @@ MRAYNS_BEGIN
  * 一个GPU只可以创建一个GPUResource 即一个Vulkan Instance
  * 渲染器应该在GPUResource的基础上创建 即共用一个Vulkan Instance 才可以共享Vulkan资源
  * 但是一个GPU可以创建多个Renderer 即多个Renderer共用一个GPUResource
+ *
+ * GPUResource只是个容器 内部数据的存储管理交由PageTable负责
  */
 class Renderer;
 class GPUResource{

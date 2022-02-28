@@ -23,16 +23,19 @@ GPUResource::ResourceDesc GPUResource::getGPUResourceDesc(GPUResource::ResourceT
 {
     return GPUResource::ResourceDesc();
 }
-void GPUResource::uploadResource(GPUResource::ResourceType type, PageTable::EntryItem entryItem, void *src, size_t size,
-                                 bool sync)
+void GPUResource::uploadResource(
+    GPUResource::ResourceType type, PageTable::EntryItem entryItem, void *src, size_t size,bool sync)
 {
+
 }
 void GPUResource::flush()
 {
+
 }
-void GPUResource::downloadResource(GPUResource::ResourceType type, PageTable::EntryItem entryItem, void *dst,
-                                   size_t size, bool sync)
+void GPUResource::downloadResource(
+    GPUResource::ResourceType type, PageTable::EntryItem entryItem, void *dst,size_t size, bool sync)
 {
+
 }
 bool GPUResource::registerRenderer(Renderer *)
 {

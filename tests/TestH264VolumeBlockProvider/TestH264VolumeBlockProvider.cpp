@@ -23,7 +23,7 @@ int main(){
 
     auto& block_volume_manager = BlockVolumeManager::getInstance();
 
-    block_volume_manager.init(std::move(p));
+    block_volume_manager.setProvider(std::move(p));
 
     int dim_x,dim_y,dim_z;
     block_volume_manager.getVolume().getVolumeDim(dim_x,dim_y,dim_z);
