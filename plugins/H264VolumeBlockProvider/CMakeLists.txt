@@ -14,3 +14,9 @@ target_link_libraries(
         MRAYNS_CORE
         voxel_uncompress
 )
+
+target_compile_features(
+        H264VolumeBlockProviderPlugin
+        PRIVATE
+        cxx_std_14
+)

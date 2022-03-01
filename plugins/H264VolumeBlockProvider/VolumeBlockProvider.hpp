@@ -13,6 +13,7 @@ MRAYNS_BEGIN
 
 class H264VolumeBlockProvider: public IVolumeBlockProviderInterface{
   public:
+    H264VolumeBlockProvider();
     void open(const std::string& filename) override;
 
     void setHostNode(HostNode* hostNode) override;
@@ -22,9 +23,12 @@ class H264VolumeBlockProvider: public IVolumeBlockProviderInterface{
     void getVolumeBlock(void* dst,BlockIndex blockIndex) override;
 
   private:
-    std::unordered_map<int,std::unique_ptr<Reader>> lod_reader;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+
     HostNode* host_node;
-    std::unique_ptr<VoxelUncompress> worker;
+
     Volume volume;
 };
 

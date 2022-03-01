@@ -7,7 +7,8 @@
 #include <vector>
 MRAYNS_BEGIN
 /**
- * @ Used for render task on GPU and not used for codec
+ * @brief Used for render task on GPU and not used for codec
+ *
  */
 class GPUNode{
   public:

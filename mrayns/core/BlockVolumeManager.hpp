@@ -18,6 +18,8 @@ class BlockVolumeManager{
      */
     static BlockVolumeManager& getInstance();
 
+    BlockVolumeManager(const BlockVolumeManager&) = delete;
+    BlockVolumeManager& operator=(const BlockVolumeManager&) = delete;
     void setProvider(std::unique_ptr<IVolumeBlockProviderInterface>&& provider);
 
     /**
@@ -42,6 +44,7 @@ class BlockVolumeManager{
 
     /**
      * @brief get volume block ptr
+     * This method is not suit for multi-thread
      * @sync meanings wait for decode result, so it also may wait for some internal locks
      * @return nullptr represent not find the volume block or no empty memory to load it
      */

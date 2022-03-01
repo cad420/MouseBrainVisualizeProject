@@ -41,7 +41,7 @@ void LoadVolume(const std::string& filename,std::vector<uint8_t>& data){
     in.close();
 }
 int main(){
-    std::string path1 = "C:\\Users\\wyz\\projects\\MouseBrainVisualizeProject\\tests\\data\\1#2#0#4_512_512_512_uint8.raw";
+    std::string path1 = "C:\\Users\\wyz\\projects\\MouseBrainVisualizeProject\\tests\\data\\gen#1#2#0#4_512_512_512_uint8.raw";
     std::string path2 = "C:\\Users\\wyz\\projects\\MouseBrainVisualizeProject\\tests\\data\\1#2#0#lod4_512_512_512_uint8.raw";
 
     std::vector<uint8_t> volume1;
