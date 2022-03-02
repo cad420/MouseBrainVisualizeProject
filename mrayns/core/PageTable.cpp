@@ -3,6 +3,11 @@
 //
 #include "PageTable.hpp"
 MRAYNS_BEGIN
+
+struct PageTable::Impl{
+
+};
+
 void PageTable::update(EntryItem, ValueItem)
 {
 }
@@ -25,6 +30,13 @@ void PageTable::release(PageTable::EntryItem)
 void PageTable::releaseAll()
 {
 
+}
+PageTable::~PageTable()
+{
+
+}
+PageTable::PageTable()
+{
 }
 
 MRAYNS_END

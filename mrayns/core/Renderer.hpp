@@ -4,7 +4,6 @@
 #pragma once
 #include <memory>
 #include "Slice.hpp"
-#include "GPUResource.hpp"
 #include "../geometry/Camera.hpp"
 #include "../common/Image.hpp"
 #include "Framebuffer.hpp"
@@ -36,7 +35,7 @@ class SliceRenderer: public Renderer{
   public:
     virtual ~SliceRenderer() = default;
     //create will register the renderer into GPUResource
-    static std::unique_ptr<SliceRenderer> create(GPUResource&);
+
     /**
      * @param slice
      * @note slice's image size is different for each render call with a high probability.
@@ -48,7 +47,7 @@ class SliceRenderer: public Renderer{
 
 class VolumeRenderer: public Renderer{
   public:
-    static std::unique_ptr<VolumeRenderer> create(GPUResource&);
+
     virtual void render(const Camera&) = 0;
 
 };

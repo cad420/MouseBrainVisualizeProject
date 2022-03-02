@@ -8,7 +8,9 @@
 MRAYNS_BEGIN
 /**
  * @brief Used for render task on GPU and not used for codec
- *
+ * GPUNode应该绑定到GPUResource里
+ * GPUNode的决策都是基于内嵌的PageTable
+ * GPUNode是分割任务算法的依据
  */
 class GPUNode{
   public:

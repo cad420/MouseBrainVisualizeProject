@@ -2,7 +2,7 @@
 // Created by wyz on 2022/2/25.
 //
 #include "core/BlockVolumeManager.hpp"
-#include "core/Renderer.hpp"
+#include "core/GPUResource.hpp"
 #include "core/VolumeBlockTree.hpp"
 #include "plugin/PluginLoader.hpp"
 #include "core/GPUNode.hpp"
@@ -74,7 +74,9 @@ void Run(){
 
     GPUNode gpu_node(0);
 
-    auto volume_renderer = VolumeRenderer::create(gpu_resource);
+
+
+    auto volume_renderer = std::unique_ptr<VolumeRenderer>(RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.createRenderer(Renderer::VOLUME)));
 
     const int frame_w = 1280;
     const int frame_h = 720;
@@ -120,6 +122,7 @@ void Run(){
        */
       std::unordered_map<Volume::BlockIndex,void*> blocks;
       std::mutex mtx;
+      std::atomic<int> task_finished_count = 0;
       auto decode_task = [&](int thread_idx,Volume::BlockIndex block_index){
         /**
          * 这里获取数据的任务调度由BlockVolumeManager具体负责
@@ -127,8 +130,11 @@ void Run(){
         auto ptr = block_volume_manager.getVolumeBlockAndLock(block_index);
         std::lock_guard<std::mutex> lk(mtx);
         blocks[block_index] = ptr;
+        task_finished_count++;
       };
       parallel_foreach(missed_blocks,decode_task,missed_block_count);
+
+      LOG_INFO("finish missed blocks decode task count {}",task_finished_count);
 
       //todo upload blocks into GPUResource, may use multi-thread to accelerate
       //在这里只需要将数据块上传到相应的GPUResource即可

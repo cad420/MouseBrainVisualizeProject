@@ -47,7 +47,11 @@ class PageTable{
      */
     void releaseAll();
 
+    //构造和析构函数都要见到Impl的完整定义
+    PageTable();
+    ~PageTable();
   private:
-
+    struct Impl;
+    std::unique_ptr<Impl> impl;
 };
 MRAYNS_END

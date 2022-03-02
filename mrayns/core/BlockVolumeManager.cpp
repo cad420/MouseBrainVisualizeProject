@@ -127,12 +127,31 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     std::mutex free_mtx;
     std::list<MemoryBlockDesc> locked_mem_blocks;
     std::mutex locked_mtx;
-    class A{
-      public:
-        ~A(){
-            LOG_INFO("destructor");
+
+    std::unordered_map<void*,BlockIndex> buffer_map;
+    std::mutex buffer_mtx;
+
+
+    bool recordPtrForBlockIndex(void* ptr,BlockIndex index){
+        std::lock_guard<std::mutex> lk(buffer_mtx);
+        buffer_map[ptr] = index;
+        return true;
+    }
+    BlockIndex getBlockIndexWithPtr(void* ptr){
+        if(buffer_map.find(ptr) == buffer_map.end()){
+            return BlockIndex{};
         }
-    }a;
+        return buffer_map.at(ptr);
+    }
+    bool erasePtrRecording(void* ptr){
+        if(buffer_map.find(ptr)==buffer_map.end()){
+            return false;
+        }
+        else{
+            buffer_map.erase(ptr);
+            return true;
+        }
+    }
 
     BlockVolumeManagerImpl(){
         //todo
@@ -458,13 +477,16 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
     //2.2 if sync wait for complete or async return immediately
     if(sync){
         provider->getVolumeBlock(block.data,blockIndex);
-
+        bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
+        assert(ret);
         return block.data;
     }
     else{
         //maybe a thread pool is a nice choice
         std::thread t([&](){
           provider->getVolumeBlock(block.data,blockIndex);
+          bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
+          assert(ret);
         });
         t.detach();
         return nullptr;
@@ -482,6 +504,9 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
     provider->getVolumeBlock(block.data,blockIndex);
     bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex,true);
     assert(ret);
+
+    impl->recordPtrForBlockIndex(block.data, blockIndex);
+
     return block.data;
 
 
@@ -496,10 +521,23 @@ void BlockVolumeManager::waitForLock(void *ptr)
 }
 bool BlockVolumeManager::unlock(void *ptr)
 {
-    return false;
+    auto block_index = impl->getBlockIndexWithPtr(ptr);
+    if(block_index.isValid()){
+        impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,block_index,true);
+        impl->erasePtrRecording(ptr);
+        return true;
+    }
+    else{
+        return false;
+    }
 }
 void BlockVolumeManager::waitForUnlock(void *ptr)
 {
+    auto block_index = impl->getBlockIndexWithPtr(ptr);
+    if(block_index.isValid()){
+        impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,block_index,true);
+        impl->erasePtrRecording(ptr);
+    }
 }
 BlockVolumeManager::BlockVolumeManager()
 {
