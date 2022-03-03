@@ -47,7 +47,7 @@ class GPUResource{
     /**
      * @return true if create GPU resource successfully, false for failed
      */
-    bool createGPUResource(ResourceType type,size_t size);
+    bool createGPUResource(ResourceDesc desc,size_t size);
 
 
 
@@ -58,14 +58,9 @@ class GPUResource{
 
     /**
      * @param sync if false must call flush to finish task
+     * @return false represent must call flush and then continue to call this
      */
-    void uploadResource(ResourceType type,PageTable::EntryItem entryItem,void* src,size_t size,bool sync);
-
-    /**
-     * @brief upload resource to pos which decided by internal cache policy
-     * @return false represent failed to find any valid empty position to load the src data
-     */
-    bool uploadResource(ResourceType type,void* src,size_t size,bool sync);
+    bool uploadResource(ResourceType type,PageTable::EntryItem entryItem,void* src,size_t size,bool sync);
 
     void flush();
 
@@ -76,6 +71,7 @@ class GPUResource{
     Renderer* createRenderer(Renderer::Type);
 
     bool registerRenderer(Renderer*);
+    Renderer* getRenderer(Renderer::Type);
 
     std::vector<Renderer*> getRenderers();
 

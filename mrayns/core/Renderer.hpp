@@ -22,6 +22,7 @@ class Renderer{
     };
     virtual Type getRendererType() const = 0;
     virtual const Framebuffer& getFrameBuffers() const = 0;
+    ~Renderer() = delete;
 };
 
 /**
@@ -33,9 +34,6 @@ class Renderer{
 
 class SliceRenderer: public Renderer{
   public:
-    virtual ~SliceRenderer() = default;
-    //create will register the renderer into GPUResource
-
     /**
      * @param slice
      * @note slice's image size is different for each render call with a high probability.

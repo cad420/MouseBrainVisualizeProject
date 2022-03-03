@@ -21,7 +21,9 @@ const std::vector<const char*> validationLayers = {
 const std::vector<const char*> deviceExtensions = {
 
 };
-
+const std::vector<const char*> instanceExtensions = {
+    VK_EXT_DEBUG_REPORT_EXTENSION_NAME
+};
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugMessageCallback(
     VkDebugReportFlagsEXT flags,
@@ -69,14 +71,15 @@ bool checkValidationLayerSupport(){
 std::vector<const char*> getRequiredDeviceExtensions(){
     std::vector<const char*> extensions;
     extensions.insert(extensions.end(),deviceExtensions.begin(),deviceExtensions.end());
-    if(enableValidationLayers){
-        extensions.emplace_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-    }
 
     //add other extensions here
 
 
     return extensions;
+}
+std::vector<const char *> getValidationLayers()
+{
+    return validationLayers;
 }
 
 struct VulkanInstance::Impl{
@@ -99,10 +102,10 @@ struct VulkanInstance::Impl{
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
-        auto extensions = getRequiredDeviceExtensions();
 
-        createInfo.enabledExtensionCount = extensions.size();
-        createInfo.ppEnabledExtensionNames = extensions.data();
+
+        createInfo.enabledExtensionCount = instanceExtensions.size();
+        createInfo.ppEnabledExtensionNames = instanceExtensions.data();
 
         if(enableValidationLayers){
             bool layersAvailable = checkValidationLayerSupport();

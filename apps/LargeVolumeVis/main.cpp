@@ -76,7 +76,7 @@ void Run(){
 
 
 
-    auto volume_renderer = std::unique_ptr<VolumeRenderer>(RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.createRenderer(Renderer::VOLUME)));
+    auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.createRenderer(Renderer::VOLUME));
 
     const int frame_w = 1280;
     const int frame_h = 720;

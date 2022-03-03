@@ -6,6 +6,8 @@
 #include <vulkan/vulkan.hpp>
 #include <memory>
 
+
+#include <vk_mem_alloc.h>
 #define VK_EXPR(expr)                                                                                                  \
     {                                                                                                                  \
         VkResult res = (expr);                                                                                         \
@@ -20,6 +22,8 @@ MRAYNS_BEGIN
 
 namespace internal{
 
+std::vector<const char*> getValidationLayers();
+std::vector<const char*> getRequiredDeviceExtensions();
 
 /**
  * 只读的并且是同样的资源是可以共享的
@@ -33,44 +37,41 @@ namespace internal{
 //一个GPUResource创建一个physical device和一个logic device
 //Renderer
 struct VulkanRendererSharedResourceWrapper{
+
+    VkQueue graphicsQueue;//can also transfer for tf or other small resource
+
     VkDescriptorSetLayout descriptorSetLayout;
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline pipeline;
-
+    VkFramebuffer framebuffer;
+    VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
     std::string rendererName;
-
-//    struct{
-//        std::vector<Vertex> vertices;
-//        std::vector<uint32_t> indices;
-//        VkBuffer vertexBuffer;
-//        VkDeviceMemory vertexBufferMemory;
-//        VkBuffer indexBuffer;
-//        VkDeviceMemory indexBufferMemory;
-//    } proxyCube;
 };
+/**
+ * https://stackoverflow.com/questions/55272626/what-is-actually-a-queue-family-in-vulkan
+ * https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkQueueSubmit.html
+ * https://stackoverflow.com/questions/37575012/should-i-try-to-use-as-many-queues-as-possible
+ * this is only 3 queue families in gpu rtx3090 for vulkan version 1.3 and nvidia driver version 5.11
+ * count = 16 VkQueueFlagBits = 15 = VK_QUEUE_GRAPHICS_BIT + VK_QUEUE_COMPUTE_BIT + VK_QUEUE_TRANSFER_BIT + VK_QUEUE_SPARSE_BINDING_BIT
+ * count = 8 VkQueueFlagBits = 14 =                          VK_QUEUE_COMPUTE_BIT + VK_QUEUE_TRANSFER_BIT + VK_QUEUE_SPARSE_BINDING_BIT
+ * count = 2 VkQueueFlagBits = 12                                                 + VK_QUEUE_TRANSFER_BIT + VK_QUEUE_SPARSE_BINDING_BIT
+ */
 struct VulkanNodeSharedResourceWrapper{
-    VkPhysicalDevice physicalDevice;
-    VkDevice device; //shared by a GPUResource and multi Renderers
+    VkPhysicalDevice physicalDevice{VK_NULL_HANDLE};
+    VkDevice device{VK_NULL_HANDLE}; //shared by a GPUResource and multi Renderers
 
-    VkPipelineCache pipelineCache;
+    VmaAllocator allocator;
 
-    VkQueue graphicsQueue;//can also transfer for tf or other small resource
+    //command pool can only be used in single-thread context for command buffer alloc, ret or free
+    VkCommandPool graphicsCommandPool{VK_NULL_HANDLE};
 
-    VkCommandPool commandPool;
+    static constexpr int maxRendererCount{4};
 
-    VkDescriptorPool descriptorPool;
-
-    std::unique_ptr<VulkanRendererSharedResourceWrapper[]> pRendererResWrapper;
-    int rendererResCount{0};
+    uint32_t graphicsQueueFamilyIndex;
 
 };
-struct VulkanNodeResourceWrapper:public VulkanNodeSharedResourceWrapper{
-    VkQueue transferQueue;//used only for volume block texture transfer
 
-    VkCommandBuffer transferCommandBuffer;
-
-};
 
 class VulkanInstance{
   public:
