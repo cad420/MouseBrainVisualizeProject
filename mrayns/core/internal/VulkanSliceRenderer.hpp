@@ -15,11 +15,24 @@ class VulkanSliceRenderer:public SliceRenderer{
     void render(const Slice&) override;
 
     static VulkanSliceRenderer* Create(VulkanNodeSharedResourceWrapper*);
-    void destroy();
 
+    friend class VulkanSliceRendererDeleter;
+    friend class VulkanRendererDeleter;
   private:
+
+    void destroy();
+    ~VulkanSliceRenderer() override;
     struct Impl;
     std::unique_ptr<Impl> impl;
+};
+
+class VulkanSliceRendererDeleter{
+  public:
+    constexpr VulkanSliceRendererDeleter() noexcept = default;
+    VulkanSliceRendererDeleter(const VulkanSliceRendererDeleter&) noexcept = default;
+    void operator()(VulkanSliceRenderer* ptr) const noexcept{
+        ptr->destroy();
+    }
 };
 
 }

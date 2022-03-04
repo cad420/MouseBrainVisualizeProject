@@ -38,6 +38,11 @@ class GPUNode{
     void addWriteLock(const TableValueItem&);
     void addWriteLock(const std::vector<TableValueItem>&);
 
+    void releaseReadLock();
+
+    void releaseWriteLock();
+
+
     int getReadLockNum();
 
     int getWriteLockNum();

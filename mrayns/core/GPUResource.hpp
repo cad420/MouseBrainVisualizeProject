@@ -29,7 +29,12 @@ class GPUResource{
 
     int getGPUIndex() const;
 
-
+    static constexpr size_t DefaultGPUMemoryLimitBytes = (size_t)24 << 30;
+    static constexpr int DefaultMaxRendererCount = 4;
+    struct ResourceLimits{
+        size_t max_mem_limit{DefaultGPUMemoryLimitBytes};
+        int max_renderer_limit{DefaultMaxRendererCount};
+    };
 
     enum ResourceType:int{
         Buffer = 1,Texture = 2
@@ -43,11 +48,16 @@ class GPUResource{
         int height;
         int depth;
     };
+    struct ResourceExtent{
+        int width;
+        int height;
+        int depth;
+    };
 
     /**
      * @return true if create GPU resource successfully, false for failed
      */
-    bool createGPUResource(ResourceDesc desc,size_t size);
+    bool createGPUResource(ResourceDesc desc);
 
 
 
@@ -60,22 +70,18 @@ class GPUResource{
      * @param sync if false must call flush to finish task
      * @return false represent must call flush and then continue to call this
      */
-    bool uploadResource(ResourceType type,PageTable::EntryItem entryItem,void* src,size_t size,bool sync);
+    bool uploadResource(ResourceDesc type,PageTable::EntryItem entryItem,ResourceExtent,void* src,size_t size,bool sync);
 
     void flush();
 
-    void downloadResource(ResourceType type,PageTable::EntryItem entryItem,void* dst,size_t size,bool sync);
+    void downloadResource(ResourceDesc type,PageTable::EntryItem entryItem,ResourceExtent,void* dst,size_t size,bool sync);
 
     GPUNode& getGPUNode();
 
-    Renderer* createRenderer(Renderer::Type);
-
-    bool registerRenderer(Renderer*);
+    //must return a available ptr or throw an exception
     Renderer* getRenderer(Renderer::Type);
 
-    std::vector<Renderer*> getRenderers();
-
-    void removeRenderer(Renderer*);
+    void releaseRenderer(Renderer*);
 
   private:
     struct Impl;

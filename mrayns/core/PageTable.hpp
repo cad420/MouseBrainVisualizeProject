@@ -13,7 +13,10 @@ class PageTable{
   public:
 
     struct EntryItem{
-
+        int x;
+        int y;
+        int z;
+        int w;
     };
 
 
@@ -25,6 +28,9 @@ class PageTable{
      */
     void update(EntryItem,ValueItem);
 
+    void insert(EntryItem,ValueItem);
+
+    void remove(EntryItem);
 
     bool query(ValueItem,EntryItem&);
 

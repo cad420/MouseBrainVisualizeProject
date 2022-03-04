@@ -76,7 +76,7 @@ void Run(){
 
 
 
-    auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.createRenderer(Renderer::VOLUME));
+    auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
 
     const int frame_w = 1280;
     const int frame_h = 720;
@@ -149,7 +149,19 @@ void Run(){
           if(cached) continue;
           bool locked = page_table.lock(table_entry);
           assert(locked);
-          gpu_resource.uploadResource(GPUResource::Texture,table_entry,block.second,volume.getBlockSize(),true);
+          GPUResource::ResourceDesc desc;
+          desc.type = GPUResource::Texture;
+          desc.width = volume.getBlockLength();
+          desc.height = volume.getBlockLength();
+          desc.depth = volume.getBlockLength();
+          desc.pitch = desc.width;
+          desc.size = volume.getBlockSize();
+          GPUResource::ResourceExtent extent{
+              volume.getBlockLength(),
+              volume.getBlockLength(),
+              volume.getBlockLength()
+          };
+          gpu_resource.uploadResource(desc,table_entry,extent,block.second,volume.getBlockSize(),true);
 //            page_table.release(table_entry);
           page_table.update(table_entry,block.first);
           table_entry_items.emplace_back(table_entry);

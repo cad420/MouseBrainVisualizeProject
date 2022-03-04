@@ -7,6 +7,8 @@
 MRAYNS_BEGIN
 namespace internal{
 
+
+
 class VulkanVolumeRenderer:public VolumeRenderer{
   public:
     Type getRendererType() const override;
@@ -14,13 +16,26 @@ class VulkanVolumeRenderer:public VolumeRenderer{
     void render(const Camera&) override;
 
     static VulkanVolumeRenderer* Create(VulkanNodeSharedResourceWrapper*);
-    void destroy();
+
+    friend class VulkanVolumeRendererDeleter;
+    friend class VulkanRendererDeleter;
+
   private:
+
+    void destroy();
+    ~VulkanVolumeRenderer() override;
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
 
-
+class VulkanVolumeRendererDeleter{
+  public:
+    constexpr VulkanVolumeRendererDeleter() noexcept = default;
+    VulkanVolumeRendererDeleter(const VulkanVolumeRendererDeleter&) noexcept = default;
+    void operator()(VulkanVolumeRenderer* ptr) const noexcept{
+        ptr->destroy();
+    }
+};
 }
 
 

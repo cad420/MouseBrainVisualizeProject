@@ -22,7 +22,7 @@ class Renderer{
     };
     virtual Type getRendererType() const = 0;
     virtual const Framebuffer& getFrameBuffers() const = 0;
-    ~Renderer() = delete;
+    virtual ~Renderer() = default;
 };
 
 /**
@@ -40,6 +40,8 @@ class SliceRenderer: public Renderer{
      */
     virtual void render(const Slice& slice) = 0;
 
+  protected:
+    virtual ~SliceRenderer() = default;
 };
 
 
@@ -48,6 +50,8 @@ class VolumeRenderer: public Renderer{
 
     virtual void render(const Camera&) = 0;
 
+  protected:
+    virtual ~VolumeRenderer() = default;
 };
 
 

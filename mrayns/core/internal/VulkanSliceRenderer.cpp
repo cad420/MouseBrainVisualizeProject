@@ -30,7 +30,12 @@ VulkanSliceRenderer *VulkanSliceRenderer::Create(VulkanNodeSharedResourceWrapper
 {
     return nullptr;
 }
-
+VulkanSliceRenderer::~VulkanSliceRenderer()
+{
+}
+void VulkanSliceRenderer::destroy()
+{
+}
 
 }
 
