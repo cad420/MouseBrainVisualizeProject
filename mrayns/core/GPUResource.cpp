@@ -91,8 +91,13 @@ struct GPUResource::Impl{
             else{
                 return false;
             }
-            renderers.emplace_back(std::move(renderer));
             limit.renderer_count++;
+            bool wasEmpty = available_renderers.empty();
+            available_renderers.push(renderer.get());
+            renderers.emplace_back(std::move(renderer));
+            if(wasEmpty && !available_renderers.empty()){
+                renderer_cv.notify_one();
+            }
             return true;
         }
         else{
@@ -581,7 +586,7 @@ GPUResource::GPUResource(int index)
 {
     impl = std::make_unique<Impl>(index);
     gpu_index = index;
-    gpu_node = std::make_unique<GPUNode>(index);
+    page_table = std::make_unique<PageTable>();
 }
 
 GPUResource::~GPUResource()
@@ -601,7 +606,7 @@ bool GPUResource::createGPUResource(GPUResource::ResourceDesc desc)
     //todo update page table status and gpu node
     if(res == -1) return false;
 
-    ExtendPageTable(gpu_node->getPageTable(),res,desc);
+    ExtendPageTable(getPageTable(),res,desc);
 
     return true;
 }
@@ -665,12 +670,6 @@ void GPUResource::downloadResource(
 
 }
 
-GPUNode &GPUResource::getGPUNode()
-{
-    assert(gpu_node.get());
-    return *gpu_node;
-}
-
 Renderer *GPUResource::getRenderer(Renderer::Type type)
 {
     auto renderer = impl->getRenderer(type);
@@ -698,6 +697,23 @@ void GPUResource::releaseRenderer(Renderer *renderer)
         LOG_ERROR("release an invalid renderer");
         throw std::runtime_error("release an invalid renderer");
     }
+}
+
+PageTable& GPUResource::getPageTable()
+{
+
+    assert(page_table.get());
+    return *page_table;
+
+
+}
+Ref<PageTable> GPUResource::getScopePageTable()
+{
+//    page_table->lock();
+//    auto f = std::bind(&PageTable::unlock,page_table.get());
+    Ref<PageTable> res(page_table.get());
+//    res.bind(std::move(f));
+    return std::move(res);
 }
 
 MRAYNS_END

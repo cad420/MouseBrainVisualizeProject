@@ -5,8 +5,8 @@
 
 #include <memory>
 #include <vector>
-#include "GPUNode.hpp"
 #include "Renderer.hpp"
+#include "PageTable.hpp"
 MRAYNS_BEGIN
 /**
  * @brief This will create vulkan GPU resources like buffer or texture.
@@ -20,7 +20,25 @@ MRAYNS_BEGIN
  * 任何对GPUResource实质性的内存更改都会改变GPUNode GPUNode会改变其内嵌的PageTable
  * 针对uint8的数据创建的纹理 只适配uint8的数据
  */
-
+template <typename T>
+class Ref{
+  public:
+    explicit Ref(T* p):p(p){}
+    Ref(const Ref&) = delete;
+    Ref(Ref&& rhs):func(std::move(rhs.func)),p(rhs.p){}
+    ~Ref(){
+        if(func) func();
+    }
+    template <typename F>
+    void bind(F&& f){
+        func = [=](){
+            f();
+        };
+    }
+  private:
+    std::function<void()> func;
+    T* p;
+};
 class GPUResource{
   public:
     //todo only one instance for one GPU
@@ -76,7 +94,9 @@ class GPUResource{
 
     void downloadResource(ResourceDesc type,PageTable::EntryItem entryItem,ResourceExtent,void* dst,size_t size,bool sync);
 
-    GPUNode& getGPUNode();
+    PageTable& getPageTable();
+
+    Ref<PageTable> getScopePageTable();
 
     //must return a available ptr or throw an exception
     Renderer* getRenderer(Renderer::Type);
@@ -87,7 +107,8 @@ class GPUResource{
     struct Impl;
     std::unique_ptr<Impl> impl;
     int gpu_index;
-    std::unique_ptr<GPUNode> gpu_node;
+
+    std::unique_ptr<PageTable> page_table;
 };
 
 MRAYNS_END

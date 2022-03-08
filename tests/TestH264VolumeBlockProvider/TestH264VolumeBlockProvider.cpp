@@ -3,7 +3,6 @@
 //
 #include "core/BlockVolumeManager.hpp"
 #include "plugin/PluginLoader.hpp"
-#include "core/GPUNode.hpp"
 #include <iostream>
 #include <fstream>
 using namespace mrayns;

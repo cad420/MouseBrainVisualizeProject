@@ -5,7 +5,6 @@
 #include "core/GPUResource.hpp"
 #include "core/VolumeBlockTree.hpp"
 #include "plugin/PluginLoader.hpp"
-#include "core/GPUNode.hpp"
 #include "common/Logger.hpp"
 #include "common/Parrallel.hpp"
 #include <SDL.h>
@@ -72,9 +71,6 @@ void Run(){
 
     GPUResource gpu_resource(0);
 
-    GPUNode gpu_node(0);
-
-
 
     auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
 
@@ -91,7 +87,7 @@ void Run(){
     camera.front = {0.f,0.f,-1.f};
     camera.up = {0.f,1.f,0.f};
     camera.near_z = 1.f;
-    camera.far_z = 3000.f;
+    camera.far_z = 1000.f;
     camera.width = frame_w;
     camera.height = frame_h;
     camera.aspect = static_cast<float>(frame_w) / static_cast<float>(frame_h);
@@ -131,24 +127,38 @@ void Run(){
         std::lock_guard<std::mutex> lk(mtx);
         blocks[block_index] = ptr;
         task_finished_count++;
+        LOG_INFO("task finish num: {}",task_finished_count);
       };
       parallel_foreach(missed_blocks,decode_task,missed_block_count);
+      //如果一次性获取的数据块数量超过内存的最大储量怎么办
 
       LOG_INFO("finish missed blocks decode task count {}",task_finished_count);
 
       //todo upload blocks into GPUResource, may use multi-thread to accelerate
       //在这里只需要将数据块上传到相应的GPUResource即可
 
-      auto& page_table = gpu_node.getPageTable();
+      std::vector<std::pair<Volume::BlockIndex,PageTable::EntryItemExt>> block_entry;
+      {
+          auto &page_table = gpu_resource.getPageTable();
+//          page_table.lock();
+          for(auto& block:missed_blocks){
+              block_entry.emplace_back(block,page_table.getEntryAndLock(block));
+          }
+
+//          page_table.unlock();
+      }
+      //      {
+//          auto page_table_ref = gpu_resource.getScopePageTable();
+//      }
 
       //upload resource sync
       std::vector<PageTable::EntryItem> table_entry_items;
       for(auto& block:blocks){
-          PageTable::EntryItem table_entry;
-          bool cached = page_table.getEntryItem(block.first,table_entry);
-          if(cached) continue;
-          bool locked = page_table.lock(table_entry);
-          assert(locked);
+          PageTable::EntryItem table_entry{};
+//          bool cached = page_table.getEntryItem(block.first,table_entry);
+//          if(cached) continue;
+//          bool locked = page_table.lock(table_entry);
+//          assert(locked);
           GPUResource::ResourceDesc desc;
           desc.type = GPUResource::Texture;
           desc.width = volume.getBlockLength();
@@ -163,7 +173,7 @@ void Run(){
           };
           gpu_resource.uploadResource(desc,table_entry,extent,block.second,volume.getBlockSize(),true);
 //            page_table.release(table_entry);
-          page_table.update(table_entry,block.first);
+//          page_table.update(table_entry,block.first);
           table_entry_items.emplace_back(table_entry);
       }
       //upload resource async
@@ -203,9 +213,9 @@ void Run(){
       //render with locked GPUResource by PageTable
       volume_renderer->render(camera);
       //unlock page table
-      for(auto& entry:table_entry_items){
-          page_table.release(entry);
-      }
+//      for(auto& entry:table_entry_items){
+//          page_table.release(entry);
+//      }
 
 
       auto& ret = volume_renderer->getFrameBuffers().getColors();

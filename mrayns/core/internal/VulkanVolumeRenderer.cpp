@@ -29,8 +29,9 @@ struct VulkanVolumeRenderer::Impl{
 VulkanVolumeRenderer* VulkanVolumeRenderer::Create(VulkanNodeSharedResourceWrapper *node_vk_res)
 {
 
+    auto ret = new VulkanVolumeRenderer();
 
-    return nullptr;
+    return ret;
 }
 
 Renderer::Type VulkanVolumeRenderer::getRendererType() const

@@ -30,6 +30,8 @@ class IVolumeBlockProviderInterface{
      */
     virtual void getVolumeBlock(void* dst,BlockIndex blockIndex) = 0;
 
+    virtual void getVolumeBlock(void* dst,BlockIndex blockIndex,std::function<int(HostNode*)> gpu_selector){}
+
 };
 
 DECLARE_PLUGIN_MODULE_ID(IVolumeBlockProviderInterface,"mrayns.core.block-provider")

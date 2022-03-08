@@ -150,7 +150,12 @@ template <typename Key, typename Value, typename Hash = std::hash<Key>> class LR
         pos.erase(p);
         data.pop_back();
     }
-
+    void pop_front(){
+        auto item = data.front();
+        auto p = pos.find(item.first);
+        pos.erase(p);
+        data.pop_front();
+    }
     float get_load_factor() const
     {
         return 1.f * data.size() / capacity;

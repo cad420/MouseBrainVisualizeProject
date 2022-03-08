@@ -494,6 +494,7 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
 }
 void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 {
+    //todo 会导致存储两个相同的Block
     //1. query from cache if the block data is already cached
     auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex);
     if(block.isValid()) return block.data;
