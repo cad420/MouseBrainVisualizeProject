@@ -94,9 +94,11 @@ void Run(){
     camera.yaw = -90.f;
     camera.pitch = 0.f;
 
-    auto volume_render = [&](){
 
-      //get current camera view and projection matrix
+
+    auto volume_render = [&](){
+        VolumeRendererCamera renderer_camera{};
+      //1. get current camera view and projection matrix
       auto view_matrix = GeometryHelper::ExtractViewMatrixFromCamera(camera);
       auto proj_matrix = GeometryHelper::ExtractProjMatrixFromCamera(camera);
       auto vp = proj_matrix * view_matrix;
@@ -104,118 +106,82 @@ void Run(){
       GeometryHelper::ExtractViewFrustumPlanesFromMatrix(vp,view_frustum);
 
 
-      auto missed_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
-      int missed_block_count = missed_blocks.size();
-      LOG_INFO("volume render missed block count: {}",missed_block_count);
+      //2. compute intersect blocks with current camera view frustum
+      auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
+      int intersect_block_count = intersect_blocks.size();
+      LOG_INFO("volume render missed block count: {}",intersect_block_count);
 
+      //3.1 assign task to different GPUResource
       //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
       //分割任务算法可以根据不同渲染器的类别应用
       //暂时不考虑多个GPU数量
-      //use GPUNode and PageTable here
-
-      /**
-       * 需要多线程获取VolumeBlock数据 但是需要等所有任务都结束后再继续渲染
-       */
-      std::unordered_map<Volume::BlockIndex,void*> blocks;
-      std::mutex mtx;
-      std::atomic<int> task_finished_count = 0;
-      auto decode_task = [&](int thread_idx,Volume::BlockIndex block_index){
-        /**
-         * 这里获取数据的任务调度由BlockVolumeManager具体负责
-         */
-        auto ptr = block_volume_manager.getVolumeBlockAndLock(block_index);
-        std::lock_guard<std::mutex> lk(mtx);
-        blocks[block_index] = ptr;
-        task_finished_count++;
-        LOG_INFO("task finish num: {}",task_finished_count);
-      };
-      parallel_foreach(missed_blocks,decode_task,missed_block_count);
-      //如果一次性获取的数据块数量超过内存的最大储量怎么办
-
-      LOG_INFO("finish missed blocks decode task count {}",task_finished_count);
-
-      //todo upload blocks into GPUResource, may use multi-thread to accelerate
-      //在这里只需要将数据块上传到相应的GPUResource即可
-
-      std::vector<std::pair<Volume::BlockIndex,PageTable::EntryItemExt>> block_entry;
-      {
-          auto &page_table = gpu_resource.getPageTable();
-//          page_table.lock();
-          for(auto& block:missed_blocks){
-              block_entry.emplace_back(block,page_table.getEntryAndLock(block));
+      //3.2 compute cached blocks and missed blocks
+      std::vector<Volume::BlockIndex> missed_blocks;
+      std::vector<Volume::BlockIndex> cached_blocks;//should release
+      auto& page_table = gpu_resource.getPageTable();
+      page_table.acquireLock();
+      for(const auto& block:intersect_blocks){
+          if(page_table.queryAndLock(block)){
+              cached_blocks.emplace_back(block);
           }
-
-//          page_table.unlock();
+          else{
+              missed_blocks.emplace_back(block);
+          }
       }
-      //      {
-//          auto page_table_ref = gpu_resource.getScopePageTable();
-//      }
+      //此时获取保证其之后不会被上传写入 一定需要此处上传
+      auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);
+      page_table.acquireRelease();
+      std::unordered_map<Volume::BlockIndex,PageTable::EntryItem> block_entries;
+      std::mutex block_entries_mtx;
+      for(const auto& entry:missed_block_entries){
+          if(entry.cached){
+              cached_blocks.emplace_back(entry.value);
+          }
+          else{
+              block_entries[entry.value] = entry.entry;
+          }
+      }
 
-      //upload resource sync
-      std::vector<PageTable::EntryItem> table_entry_items;
-      for(auto& block:blocks){
-          PageTable::EntryItem table_entry{};
-//          bool cached = page_table.getEntryItem(block.first,table_entry);
-//          if(cached) continue;
-//          bool locked = page_table.lock(table_entry);
-//          assert(locked);
+      //4 get block and upload
+
+      auto task = [&](int thread_idx,Volume::BlockIndex block_index){
+          auto p = block_volume_manager.getVolumeBlockAndLock(block_index);
+          std::lock_guard<std::mutex> lk(block_entries_mtx);
+          auto entry = block_entries[block_index];
           GPUResource::ResourceDesc desc;
           desc.type = GPUResource::Texture;
           desc.width = volume.getBlockLength();
+          desc.pitch = volume.getBlockLength();
           desc.height = volume.getBlockLength();
           desc.depth = volume.getBlockLength();
-          desc.pitch = desc.width;
           desc.size = volume.getBlockSize();
           GPUResource::ResourceExtent extent{
               volume.getBlockLength(),
               volume.getBlockLength(),
               volume.getBlockLength()
           };
-          gpu_resource.uploadResource(desc,table_entry,extent,block.second,volume.getBlockSize(),true);
-//            page_table.release(table_entry);
-//          page_table.update(table_entry,block.first);
-          table_entry_items.emplace_back(table_entry);
-      }
-      //upload resource async
-/*
-        std::vector<std::pair<PageTable::EntryItem,PageTable::ValueItem>> book;
-        for(auto& block:blocks){
-          page_table.lock(block.first);
-          PageTable::EntryItem table_entry;
-          bool cached = page_table.getEntryItem(block.first,table_entry);
-          book.emplace_back(std::make_pair(table_entry,block.first));
-          if(cached) continue;
-          gpu_resource.uploadResource(GPUResource::Texture,table_entry,block.second,volume.getBlockSize(),false);
-        }
-        gpu_resource.flush();
-        page_table.releaseAll();
-        for(auto& b:book) page_table.update(b.first,b.second);
-*/
+          gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),false);
+          block_volume_manager.unlock(p);
+      };
+      //4.1 get volume block and upload to GPUResource
+      parallel_foreach(missed_blocks,task,missed_blocks.size());
 
-      //unlock the blocks in the BlockVolumeManager in the CPU after uploading resource to GPUResource
-      {
-          int unlock_failed_count = 0;
-          for (const auto &block : blocks)
-          {
-              if (!block_volume_manager.unlock(block.second))
-              {
-                  unlock_failed_count++;
-                  LOG_ERROR("unlock block failed: {} {} {} {}", block.first.x, block.first.y, block.first.z,
-                            block.first.w);
-              }
-          }
-          if (unlock_failed_count > 0)
-          {
-              LOG_ERROR("{} blocks failed to unlock", unlock_failed_count);
-          }
+      gpu_resource.flush();
+      //4.2 release write to read lock
+      for(const auto& block:missed_blocks){
+          page_table.update(block);
       }
 
-      //render with locked GPUResource by PageTable
-      volume_renderer->render(camera);
-      //unlock page table
-//      for(auto& entry:table_entry_items){
-//          page_table.release(entry);
-//      }
+      //如果一次性获取的数据块数量超过内存的最大储量怎么办
+
+
+      //5 render and merge result
+      //5.1 render
+      volume_renderer->render(renderer_camera);
+      //5.2 release read lock for page table
+      for(const auto& block:missed_blocks){
+          page_table.release(block);
+      }
 
 
       auto& ret = volume_renderer->getFrameBuffers().getColors();

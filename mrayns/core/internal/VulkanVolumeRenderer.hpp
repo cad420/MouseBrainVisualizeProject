@@ -11,9 +11,11 @@ namespace internal{
 
 class VulkanVolumeRenderer:public VolumeRenderer{
   public:
+
+    void setVolume(Volume) override;
     Type getRendererType() const override;
     const Framebuffer& getFrameBuffers() const override;
-    void render(const Camera&) override;
+    void render(const VolumeRendererCamera&) override;
 
     static VulkanVolumeRenderer* Create(VulkanNodeSharedResourceWrapper*);
 

@@ -37,14 +37,16 @@ std::vector<const char*> getRequiredDeviceExtensions();
 //一个GPUResource创建一个physical device和一个logic device
 //Renderer
 struct VulkanRendererSharedResourceWrapper{
-
+    VkDevice device{VK_NULL_HANDLE}; //shared ptr get by VulkanNodeSharedResourceWrapper
     VkQueue graphicsQueue;//can also transfer for tf or other small resource
+
 
     VkDescriptorSetLayout descriptorSetLayout;
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline pipeline;
     VkFramebuffer framebuffer;
+    VkCommandPool graphicsPool;
     VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
     std::string rendererName;
 };
@@ -61,7 +63,7 @@ struct VulkanNodeSharedResourceWrapper{
     VkPhysicalDevice physicalDevice{VK_NULL_HANDLE};
     VkDevice device{VK_NULL_HANDLE}; //shared by a GPUResource and multi Renderers
 
-    VmaAllocator allocator;
+    VmaAllocator allocator;//for large texture
 
     //command pool can only be used in single-thread context for command buffer alloc, ret or free
     VkCommandPool graphicsCommandPool{VK_NULL_HANDLE};

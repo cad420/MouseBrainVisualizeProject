@@ -7,7 +7,18 @@
 #include "../geometry/Camera.hpp"
 #include "../common/Image.hpp"
 #include "Framebuffer.hpp"
+#include "PageTable.hpp"
 MRAYNS_BEGIN
+
+struct TransferFunction{
+    using Point = std::pair<float,RGBA>;
+    std::vector<Point> points;
+};
+struct TransferFunctionExt: public TransferFunction{
+    static constexpr int TFDim = 256;
+    float tf[TFDim*4];
+};
+
 /**
  * @brief Use vulkan to imply render.
  * Interface will not be related with any vulkan objects.
@@ -20,6 +31,10 @@ class Renderer{
     enum Type:int{
         SLICE = 0,VOLUME=1
     };
+    virtual void setVolume(Volume)  = 0;
+    //todo
+    virtual void setTransferFunction() {};
+    virtual void updatePageTable(std::vector<std::pair<PageTable::EntryItem,PageTable::ValueItem>>){}
     virtual Type getRendererType() const = 0;
     virtual const Framebuffer& getFrameBuffers() const = 0;
     virtual ~Renderer() = default;
@@ -48,7 +63,7 @@ class SliceRenderer: public Renderer{
 class VolumeRenderer: public Renderer{
   public:
 
-    virtual void render(const Camera&) = 0;
+    virtual void render(const VolumeRendererCamera&) = 0;
 
   protected:
     virtual ~VolumeRenderer() = default;

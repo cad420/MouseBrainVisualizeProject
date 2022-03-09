@@ -12,7 +12,7 @@ struct Camera{
     Vector3f target;
     Vector3f up;
     float near_z;
-    float far_z;
+    float far_z;//尽可能大 当相机在体外的时候 最大的lod也被使用
     float fov{30.f};
     int width;
     int height;
@@ -24,6 +24,25 @@ struct CameraExt: public Camera{
     Vector3f front;
     float yaw;
     float pitch;
+};
+
+struct VolumeRendererLodDist{
+    static constexpr int MaxLod = 12;
+    float lod_dist[MaxLod] = {0.f};
+};
+struct VolumeRendererSortFirstDesc{
+
+};
+struct VolumeRendererSortLastDesc{
+
+};
+struct VolumeRendererMPIDesc{
+
+};
+struct VolumeRendererCamera: public Camera{
+    float raycasting_step;
+    VolumeRendererLodDist lod_dist;
+    VolumeRendererMPIDesc mpi_desc;
 };
 
 MRAYNS_END

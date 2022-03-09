@@ -193,6 +193,10 @@ const Volume &VolumeBlockTreeImpl::getVolume() const
     return volume;
 }
 
+//按照普通的算法 首先计算lod0相交的块 然后更具lod-dist策略进行淘汰更换得到lod更大的块
+//这样子会很慢 因为当视锥体很大时候 lod0相交的块十分多 时间可能需要十几ms的代价
+//另一种策略是 从最大的lod这一层开始 如果当前层的块相交 那么求得视点与该块的最近距离所mapping的lod 对该块的子节点递归求交直到lod小于刚求的最小lod
+
 template <typename T>
 std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeIntersect(T &&t, int level)
 {

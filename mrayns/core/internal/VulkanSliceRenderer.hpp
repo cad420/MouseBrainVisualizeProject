@@ -10,6 +10,8 @@ namespace internal{
 
 class VulkanSliceRenderer:public SliceRenderer{
   public:
+
+    void setVolume(Volume) override;
     Type getRendererType() const override;
     const Framebuffer& getFrameBuffers() const override;
     void render(const Slice&) override;

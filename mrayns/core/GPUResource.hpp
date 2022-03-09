@@ -75,6 +75,7 @@ class GPUResource{
     /**
      * @return true if create GPU resource successfully, false for failed
      */
+     //todo create gpu resource at construct
     bool createGPUResource(ResourceDesc desc);
 
 

@@ -36,6 +36,9 @@ VulkanSliceRenderer::~VulkanSliceRenderer()
 void VulkanSliceRenderer::destroy()
 {
 }
+void VulkanSliceRenderer::setVolume(Volume)
+{
+}
 
 }
 
