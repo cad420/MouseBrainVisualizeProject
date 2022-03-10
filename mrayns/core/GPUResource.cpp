@@ -23,17 +23,6 @@ struct VulkanNodeResourceWrapper:public internal::VulkanNodeSharedResourceWrappe
     std::mutex cmd_pool_mtx;
     std::mutex transfer_mtx;
 
-    //https://www.khronos.org/assets/uploads/developers/library/2018-vulkan-devday/03-Memory.pdf
-    //staging buffer VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT will alloc cpu memory
-    //VK_FORMAT_R8_UNORM specifies a one-component, 8-bit unsigned normalized format that has a single 8-bit R component
-    struct TextureWrapper{
-        VkImage image;
-//        VkDeviceMemory mem;
-        VmaAllocation allocation;
-        VkImageView view;
-    };
-    VkSampler texture_sampler{VK_NULL_HANDLE};
-    std::vector<TextureWrapper> textures;
 };
 
 namespace internal

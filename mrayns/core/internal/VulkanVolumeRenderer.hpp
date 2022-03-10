@@ -4,6 +4,7 @@
 #pragma once
 #include "VulkanUtil.hpp"
 #include "../Renderer.hpp"
+
 MRAYNS_BEGIN
 namespace internal{
 

@@ -14,7 +14,7 @@ struct TransferFunction{
     using Point = std::pair<float,RGBA>;
     std::vector<Point> points;
 };
-struct TransferFunctionExt: public TransferFunction{
+struct TransferFunctionExt1D: public TransferFunction{
     static constexpr int TFDim = 256;
     float tf[TFDim*4];
 };

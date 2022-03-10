@@ -7,10 +7,33 @@ layout(input_attachment_index = 1, binding = 1) uniform subpassInput RayExit;
 
 layout(binding = 2) uniform sampler1D TransferTable;
 
-const int MaxTextureNum = 12;
-
+const int MaxTextureNum = 16;
+const int MaxVolumeLod = 12;
 layout(binding = 3) uniform sampler3D CachedVolume[MaxTextureNum];
 
-void main() {
+//uoload once for one volume
+layout(binding = 4) uniform VolumeInfoUBO{
+    ivec4 volume_dim;//x y z and max_lod
+    ivec3 lod0_block_dim;
+    int block_length;
+    int padding;
+    vec3 volume_space;
+    vec3 inv_volume_space;
+    float voxel;
+    uint lod_page_table_offset[MaxVolumeLod];
+    vec3 inv_texture_shape;
+}volumeInfoUBO;
 
+layout(std140,binding = 5) readonly buffer PageTable{
+    ivec4 entry_value[];
+}pageTable;
+
+layout(binding = 6) uniform RenderParams{
+    float lod_dist[MaxVolumeLod];
+    float ray_step;
+    vec3 view_pos;
+}renderParams;
+
+void main() {
+    vec3 ray_entry_pos = subpassLoad(RayEntry).xyz;
 }

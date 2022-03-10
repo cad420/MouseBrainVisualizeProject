@@ -49,6 +49,7 @@ class GPUResource{
 
     static constexpr size_t DefaultGPUMemoryLimitBytes = (size_t)24 << 30;
     static constexpr int DefaultMaxRendererCount = 4;
+    static constexpr int DefaultMaxGPUTextureCount = 16;
     struct ResourceLimits{
         size_t max_mem_limit{DefaultGPUMemoryLimitBytes};
         int max_renderer_limit{DefaultMaxRendererCount};

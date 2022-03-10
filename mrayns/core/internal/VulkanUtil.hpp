@@ -5,7 +5,7 @@
 #include "../../common/Define.hpp"
 #include <vulkan/vulkan.hpp>
 #include <memory>
-
+#include "../../geometry/Mesh.hpp"
 
 #include <vk_mem_alloc.h>
 #define VK_EXPR(expr)                                                                                                  \
@@ -32,24 +32,38 @@ std::vector<const char*> getRequiredDeviceExtensions();
  * 共享 代理几何体 纹理资源
  * 每一个Renderer都独自拥有各自的DescriptorSets Framebuffer
  */
-
+struct FramebufferAttachment{
+    VkImage image{VK_NULL_HANDLE};
+    VkDeviceMemory mem{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+    VkFormat format{VK_FORMAT_UNDEFINED};
+};
 //using vulkan to decode https://indico.freedesktop.org/event/1/contributions/29/attachments/32/42/xdc2021-gst-vulkan.pdf
 //一个GPUResource创建一个physical device和一个logic device
 //Renderer
-struct VulkanRendererSharedResourceWrapper{
-    VkDevice device{VK_NULL_HANDLE}; //shared ptr get by VulkanNodeSharedResourceWrapper
-    VkQueue graphicsQueue;//can also transfer for tf or other small resource
+struct VulkanRendererResourceWrapper
+{
+    //shared resource
+    //device is shared by node
+    VkDevice shared_device{VK_NULL_HANDLE}; //shared ptr get by VulkanNodeSharedResourceWrapper
+    //shared with the renderer in the same node
+    VkQueue shared_graphics_queue;//can also transfer for tf or other small resource
+
+    //public resource
+    //shared for same type renderer but not shared with each other
+    //some static resource for the type of renderer
+
+    inline static int DefaultFrameWidth = 1920;
+    inline static int DefaultFrameHeight = 1080;
 
 
-    VkDescriptorSetLayout descriptorSetLayout;
-    VkRenderPass renderPass;
-    VkPipelineLayout pipelineLayout;
-    VkPipeline pipeline;
-    VkFramebuffer framebuffer;
-    VkCommandPool graphicsPool;
+//    VkCommandPool graphicsPool;//should use for transfer page table and proxy cube data
+
     VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
+
     std::string rendererName;
 };
+
 /**
  * https://stackoverflow.com/questions/55272626/what-is-actually-a-queue-family-in-vulkan
  * https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkQueueSubmit.html
@@ -72,8 +86,23 @@ struct VulkanNodeSharedResourceWrapper{
 
     uint32_t graphicsQueueFamilyIndex;
 
+    //https://www.khronos.org/assets/uploads/developers/library/2018-vulkan-devday/03-Memory.pdf
+    //staging buffer VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT will alloc cpu memory
+    //VK_FORMAT_R8_UNORM specifies a one-component, 8-bit unsigned normalized format that has a single 8-bit R component
+    struct TextureWrapper{
+        VkImage image;
+//        VkDeviceMemory mem;
+        VmaAllocation allocation;
+        VkImageView view;
+    };
+    VkSampler texture_sampler{VK_NULL_HANDLE};
+    std::vector<TextureWrapper> textures;
+
 };
 
+
+void SetupVulkanRendererSharedResources(VulkanNodeSharedResourceWrapper* node_vk_res,
+                                         VulkanRendererResourceWrapper * renderer_vk_res);
 
 class VulkanInstance{
   public:
@@ -93,6 +122,27 @@ class VulkanInstance{
     std::unique_ptr<Impl> impl;
 };
 
+
+VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat *depthFormat);
+
+uint32_t getMemoryTypeIndex(VkPhysicalDevice physicalDevice,uint32_t typeBits, VkMemoryPropertyFlags properties);
+
+void createImage(VkPhysicalDevice physicalDevice,VkDevice device,uint32_t width,uint32_t height,uint32_t mipLevels,
+                 VkSampleCountFlagBits numSamples,VkFormat format,
+                 VkImageTiling tiling,VkImageUsageFlags usage,VkMemoryPropertyFlags properties,
+                 VkImage& image,VkDeviceMemory& imageMemory);
+
+void createImageView(VkDevice device,VkImage image,VkFormat format,VkImageAspectFlags aspectFlags,uint32_t mipLevels,VkImageView& imageView);
+
+std::vector<char> readShaderFile(const std::string& filename);
+
+VkShaderModule createShaderModule(VkDevice device,const std::vector<char>& code);
+
+using Vertex = ::mrayns::Vertex;
+
+VkVertexInputBindingDescription getVertexBindingDescription();
+
+VkVertexInputAttributeDescription getVertexAttributeDescription();
 
 }
 

@@ -7,7 +7,8 @@ MRAYNS_BEGIN
 
 namespace internal{
 
-struct SliceRendererPrivateVulkanResourceWrapper:public VulkanRendererSharedResourceWrapper{
+struct SliceRendererPrivateVulkanResourceWrapper:public VulkanRendererResourceWrapper
+{
     VkDescriptorSet descriptorSet;
     VkCommandBuffer commandBuffer;
 
