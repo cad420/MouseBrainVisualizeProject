@@ -25,7 +25,7 @@ class Volume{
         FLOAT32,FLOAT64
     };
     struct BlockIndex{
-        int x{-1},y{-1},z{-1},w{0};
+        int x{-1},y{-1},z{-1},w{-1};
         bool isValid() const{
             return x>=0 && y>=0 && z>=0 && w>=0;
         }

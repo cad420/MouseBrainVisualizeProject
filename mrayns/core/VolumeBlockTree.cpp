@@ -89,12 +89,12 @@ class VolumeBlockTreeImpl{
                 int level_y = (last_level_y + 1) / 2;
                 int level_z = (last_level_z + 1) / 2;
                 Array3D level_nodes;
+                level_nodes.resize(level_z);
                 for(int z = 0;z<level_z;z++){
-                    level_nodes.resize(level_z);
+                    level_nodes[z].resize(level_y);
                     for(int y = 0;y<level_y;y++){
-                        level_nodes[z].resize(level_y);
+                        level_nodes[z][y].resize(level_x);
                         for(int x = 0;x<level_x;x++){
-                            level_nodes[z][y].resize(level_x);
                             auto node = new OctNode();
                             node->kids[0] = get_kid(last_level_nodes,last_level_x,last_level_y,last_level_z,x*2,y*2,z*2);
                             node->kids[1] = get_kid(last_level_nodes,last_level_x,last_level_y,last_level_z,x*2+1,y*2,z*2);

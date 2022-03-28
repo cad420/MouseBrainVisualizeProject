@@ -20,6 +20,15 @@ class PageTable{
         bool operator==(const EntryItem& entry) const{
             return x == entry.x && y == entry.y && z == entry.z && w == entry.w;
         }
+        explicit operator bool() const{
+            return x < 0 || y < 0 || z < 0 || w < 0;
+        }
+        bool isValid() const{
+            return bool(*this);
+        }
+        EntryItem()
+        :x(-1),y(-1),z(-1),w(-1)
+        {}
     };
 
 

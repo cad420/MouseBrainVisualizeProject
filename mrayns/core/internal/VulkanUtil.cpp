@@ -1,7 +1,9 @@
 //
 // Created by wyz on 2022/3/2.
 //
+#define VMA_IMPLEMENTATION
 #include "VulkanUtil.hpp"
+
 #include "../../common/Logger.hpp"
 #include <iostream>
 #include <fstream>

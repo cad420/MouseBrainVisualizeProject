@@ -7,10 +7,13 @@ MRAYNS_BEGIN
 
 namespace internal{
 
-struct SliceRendererPrivateVulkanResourceWrapper:public VulkanRendererResourceWrapper
+struct SliceRendererVulkanSharedResourceWrapper:public VulkanRendererResourceWrapper
 {
     VkDescriptorSet descriptorSet;
     VkCommandBuffer commandBuffer;
+
+};
+struct SliceRendererVulkanPrivateResourceWrapper{
 
 };
 struct VulkanSliceRenderer::Impl{
@@ -18,7 +21,7 @@ struct VulkanSliceRenderer::Impl{
 };
 Renderer::Type VulkanSliceRenderer::getRendererType() const
 {
-    return Renderer::VOLUME;
+    return Renderer::SLICE;
 }
 const Framebuffer &VulkanSliceRenderer::getFrameBuffers() const
 {

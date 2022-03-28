@@ -4,7 +4,7 @@
 #include "GPUResource.hpp"
 #include <cassert>
 #include "../common/Logger.hpp"
-#define VMA_IMPLEMENTATION
+
 #include "internal/VulkanUtil.hpp"
 #include <set>
 #include "internal/VulkanVolumeRenderer.hpp"
@@ -285,8 +285,8 @@ struct GPUResource::Impl{
             LOG_INFO("GPUResource memory not enough to create new texture resource");
             return -1;
         }
-
         VulkanNodeResourceWrapper::TextureWrapper texture{};
+        texture.extent = {width,height,depth};
         VkImageCreateInfo imageCreateInfo{};
         imageCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imageCreateInfo.imageType = VK_IMAGE_TYPE_3D;
@@ -511,9 +511,11 @@ struct GPUResource::Impl{
     }
     void copyToStagingBuffer(const StagingBuffer& stagingBuffer,void* data,size_t size){
         void* p;
-        VK_EXPR(vkMapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory(),0,size,0,&p));
+//        VK_EXPR(vkMapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory(),0,size,0,&p));
+        VK_EXPR(vmaMapMemory(node_vulkan_res->allocator,stagingBuffer.allocation,&p));
         memcpy(data,p,size);
-        vkUnmapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory());
+//        vkUnmapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory());
+        vmaUnmapMemory(node_vulkan_res->allocator,stagingBuffer.allocation);
     }
     void flushStagingBufferAndRelease(size_t threadID){
         std::vector<VkCommandBuffer> cmd;

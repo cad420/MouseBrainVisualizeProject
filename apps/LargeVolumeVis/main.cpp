@@ -107,12 +107,15 @@ void Run(){
 
 
       //2. compute intersect blocks with current camera view frustum
+      //需要得到不同lod的相交块
       auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
       int intersect_block_count = intersect_blocks.size();
       LOG_INFO("volume render missed block count: {}",intersect_block_count);
 
       //3.1 assign task to different GPUResource
       //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
+      //分割并不是更高效利用GPU 而是用更多的GPU资源提升绘制速度 所以应该只在总的负载很小时开启
+      //体绘制并不是很适合
       //分割任务算法可以根据不同渲染器的类别应用
       //暂时不考虑多个GPU数量
       //3.2 compute cached blocks and missed blocks

@@ -144,6 +144,8 @@ struct PageTable::Impl{
 
     };
 
+    //https://segmentfault.com/a/1190000022558044
+
     using LockItem = std::pair<EntryItem,ValueItem>;
     using ReadLockItem = std::pair<LockItem,int>;
     using WriteLockItem = LockItem ;

@@ -18,6 +18,8 @@ struct Slice{
     Vector3f x_dir;
     Vector3f y_dir;
     float voxels_per_pixel;
+//    static constexpr int MaxLod = 12;
+//    float lod_voxel[MaxLod];
 
 };
 

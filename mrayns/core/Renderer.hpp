@@ -32,9 +32,10 @@ class Renderer{
         SLICE = 0,VOLUME=1
     };
     virtual void setVolume(Volume)  = 0;
-    //todo
-    virtual void setTransferFunction() {};
-    virtual void updatePageTable(std::vector<std::pair<PageTable::EntryItem,PageTable::ValueItem>>){}
+    //not necessary for slice render
+    virtual void setTransferFunction(TransferFunction) {};
+    using PageTableItem = std::pair<PageTable::EntryItem,PageTable::ValueItem>;
+    virtual void updatePageTable(std::vector<PageTableItem>){}
     virtual Type getRendererType() const = 0;
     virtual const Framebuffer& getFrameBuffers() const = 0;
     virtual ~Renderer() = default;
@@ -65,6 +66,7 @@ class VolumeRenderer: public Renderer{
 
     virtual void render(const VolumeRendererCamera&) = 0;
 
+    virtual void setTransferFunction(TransferFunctionExt1D) = 0;
   protected:
     virtual ~VolumeRenderer() = default;
 };

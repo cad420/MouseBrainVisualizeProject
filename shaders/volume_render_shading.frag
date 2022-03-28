@@ -24,8 +24,12 @@ layout(binding = 4) uniform VolumeInfoUBO{
     vec3 inv_texture_shape;
 }volumeInfoUBO;
 
-layout(std140,binding = 5) readonly buffer PageTable{
-    ivec4 entry_value[];
+//layout(std140,binding = 5) readonly buffer PageTable{
+//    ivec4 entry_value[];
+//}pageTable;
+const int HashTableSize = 1024;
+layout(binding = 5) uniform PageTable{
+    ivec4 hash_table[HashTableSize];
 }pageTable;
 
 layout(binding = 6) uniform RenderParams{

@@ -6,7 +6,7 @@
 #include <vulkan/vulkan.hpp>
 #include <memory>
 #include "../../geometry/Mesh.hpp"
-
+#include <mutex>
 #include <vk_mem_alloc.h>
 #define VK_EXPR(expr)                                                                                                  \
     {                                                                                                                  \
@@ -49,6 +49,9 @@ struct VulkanRendererResourceWrapper
     //shared with the renderer in the same node
     VkQueue shared_graphics_queue;//can also transfer for tf or other small resource
 
+    VkCommandPool shared_graphics_command_pool;
+    std::mutex pool_mtx;
+
     //public resource
     //shared for same type renderer but not shared with each other
     //some static resource for the type of renderer
@@ -79,7 +82,7 @@ struct VulkanNodeSharedResourceWrapper{
 
     VmaAllocator allocator;//for large texture
 
-    //command pool can only be used in single-thread context for command buffer alloc, ret or free
+    //command pool can only be used in single-thread context for command buffer alloc, ret or free and recording!!!
     VkCommandPool graphicsCommandPool{VK_NULL_HANDLE};
 
     static constexpr int maxRendererCount{4};
@@ -94,6 +97,7 @@ struct VulkanNodeSharedResourceWrapper{
 //        VkDeviceMemory mem;
         VmaAllocation allocation;
         VkImageView view;
+        VkExtent3D extent;
     };
     VkSampler texture_sampler{VK_NULL_HANDLE};
     std::vector<TextureWrapper> textures;
@@ -127,6 +131,7 @@ VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat *dept
 
 uint32_t getMemoryTypeIndex(VkPhysicalDevice physicalDevice,uint32_t typeBits, VkMemoryPropertyFlags properties);
 
+//use default vulkan allocator
 void createImage(VkPhysicalDevice physicalDevice,VkDevice device,uint32_t width,uint32_t height,uint32_t mipLevels,
                  VkSampleCountFlagBits numSamples,VkFormat format,
                  VkImageTiling tiling,VkImageUsageFlags usage,VkMemoryPropertyFlags properties,
