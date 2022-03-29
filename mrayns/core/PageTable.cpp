@@ -201,7 +201,7 @@ struct PageTable::Impl{
         }
         bool popItem(Key key,Item& item){
             //删除时从低优先级开始
-            for(int i = MinP ;i<=MaxP;--i){
+            for(int i = MinP ;i<=MaxP;++i){
                 auto res = mq[i].popItem(key,item);
                 if(res) return true;
             }
@@ -366,14 +366,14 @@ struct PageTable::Impl{
         return page_table.cached_items.popItem(value,item);
     }
     void pushToReadLock(LockItem lockItem){
-        std::lock_guard<std::mutex> lk(read_mtx);
         assert(queryValueItemStatus(lockItem.second)!=ReadLocked);
+        std::lock_guard<std::mutex> lk(read_mtx);
         page_table.read_locked_items.emplace_back(lockItem,1);
         read_cv.notify_one();
     }
     void pushToWriteLock(LockItem lockItem){
-        std::lock_guard<std::mutex> lk(write_mtx);
         assert(queryValueItemStatus(lockItem.second)!=WriteLocked);
+        std::lock_guard<std::mutex> lk(write_mtx);
         page_table.write_locked_items.emplace_back(lockItem);
     }
     void pushToCache(CacheItem item){
@@ -444,20 +444,31 @@ struct PageTable::Impl{
         return false;
     }
     bool decreaseReadLockForExisted(ValueItem value){
-        std::lock_guard<std::mutex> lk(read_mtx);
-        for(auto& item:page_table.read_locked_items){
-            if(item.first.second == value){
-                assert(item.second > 0);
-                if(item.second == 1){
-                    moveItem(value,ReadLocked,Cached);
+        bool move = false;
+        {
+            std::lock_guard<std::mutex> lk(read_mtx);
+            for (auto &item : page_table.read_locked_items)
+            {
+                if (item.first.second == value)
+                {
+                    assert(item.second > 0);
+                    if (item.second == 1)
+                    {
+                        move = true;
+                    }
+                    else
+                    {
+                        --item.second;
+                        return true;
+                    }
                 }
-                else{
-                    --item.second;
-                }
-                return true;
             }
         }
-        return false;
+        if(move){
+            moveItem(value,ReadLocked,Cached);
+            return true;
+        }
+        else return false;
     }
 
     bool queryItemAndReadLock(ValueItem value){
@@ -473,6 +484,29 @@ struct PageTable::Impl{
         else{
             return false;
         }
+    }
+
+    std::vector<EntryItemExt> queryItemsAndReadLock(const std::vector<ValueItem>& values){
+        std::vector<EntryItemExt> ret;
+        for(const auto& value:values){
+            auto status = queryValueItemStatus(value);
+            if(status != ReadLocked && status != Cached){
+                ret.emplace_back(EntryItemExt{EntryItem{},value,false});
+            }
+            if(status == ReadLocked){
+                addReadLockForExisted(value);
+            }
+            else if(status == Cached){
+                moveItem(value,Cached,ReadLocked);
+            }
+            std::lock_guard<std::mutex> lk(read_mtx);
+            for(auto& item:page_table.read_locked_items){
+                if(item.first.second == value){
+                    ret.emplace_back(EntryItemExt{item.first.first,item.first.second,true});
+                }
+            }
+        }
+        return ret;
     }
 
     //当一个Item被Write Lock时 其它线程无法得知 会再次Write Lock
@@ -661,6 +695,15 @@ PageTable::~PageTable()
 PageTable::PageTable()
 {
     impl = std::make_unique<Impl>();
+}
+PageTable::EntryItemExt PageTable::queryAndLockExt(ValueItem value)
+{
+    assert(IsAcquireLocked());
+    return queriesAndLockExt({value}).front();
+}
+std::vector<PageTable::EntryItemExt> PageTable::queriesAndLockExt(const std::vector<ValueItem>& values)
+{
+    return impl->queryItemsAndReadLock(values);
 }
 
 MRAYNS_END

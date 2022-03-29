@@ -80,6 +80,7 @@ struct GPUResource::Impl{
             else{
                 return false;
             }
+            if(!renderer) return false;
             limit.renderer_count++;
             bool wasEmpty = available_renderers.empty();
             available_renderers.push(renderer.get());
@@ -417,7 +418,7 @@ struct GPUResource::Impl{
         bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
         VmaAllocationCreateInfo allocInfo{};
-        allocInfo.usage = VMA_MEMORY_USAGE_CPU_COPY;
+        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
         auto res = vmaCreateBuffer(node_vulkan_res->allocator,&bufferCreateInfo,&allocInfo,&stagingBuffer.buffer,&stagingBuffer.allocation,nullptr);
         if(res == VK_SUCCESS){
             LOG_INFO("create staging buffer for size({}) successfully",size);
@@ -570,7 +571,22 @@ struct GPUResource::Impl{
 };
 
 static void ExtendPageTable(PageTable& pageTable,int w,const GPUResource::ResourceDesc& desc){
-
+    try{
+        int xx = desc.width / desc.block_length;
+        int yy = desc.height / desc.block_length;
+        int zz = desc.depth / desc.block_length;
+        for(int z = 0; z < zz; z++){
+            for(int y = 0; y < yy; y++){
+                for(int x = 0; x < xx; x++){
+                    pageTable.insert(PageTable::EntryItem{x,y,z,w});
+                }
+            }
+        }
+    }
+    catch (const std::exception& err)
+    {
+        LOG_ERROR("ExtendPageTable error: {}",err.what());
+    }
 }
 
 GPUResource::GPUResource(int index)

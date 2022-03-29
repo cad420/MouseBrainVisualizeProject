@@ -29,6 +29,9 @@ class PageTable{
         EntryItem()
         :x(-1),y(-1),z(-1),w(-1)
         {}
+        EntryItem(int x,int y,int z,int w):
+        x(x),y(y),z(z),w(w)
+        {}
     };
 
 
@@ -67,6 +70,11 @@ class PageTable{
         ValueItem value;
         bool cached;
     };
+
+    EntryItemExt queryAndLockExt(ValueItem);
+
+    std::vector<EntryItemExt> queriesAndLockExt(const std::vector<ValueItem>& );
+
     EntryItemExt getEntryAndLock(ValueItem);
 
     //get all entries the same time and lock all

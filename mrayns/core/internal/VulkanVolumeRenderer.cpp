@@ -55,7 +55,7 @@ struct VolumeRendererVulkanSharedResourceWrapper:public VulkanRendererResourceWr
      static constexpr VkFormat rayEntryImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
      static constexpr VkFormat rayExitImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
      static constexpr VkFormat depthImageFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
-     static constexpr VkFormat colorImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+     static constexpr VkFormat colorImageFormat = VK_FORMAT_R8G8B8A8_SRGB;
 };
 
 struct VolumeRendererVulkanPrivateResourceWrapper{
@@ -536,6 +536,7 @@ struct VulkanVolumeRenderer::Impl{
         }
         //create color resource
         {
+            renderer_vk_res->colorAttachment.format = VK_FORMAT_R8G8B8A8_SRGB;
             createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->colorAttachment.format,
                         VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -624,10 +625,44 @@ struct VulkanVolumeRenderer::Impl{
                                   VK_IMAGE_LAYOUT_UNDEFINED,
                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         }
+        //create vma allocator
+        {
+            VmaAllocatorCreateInfo allocatorCreateInfo{};
+            allocatorCreateInfo.vulkanApiVersion = VK_API_VERSION_1_2;
+            allocatorCreateInfo.physicalDevice = node_vk_res->physicalDevice;
+            allocatorCreateInfo.device = render_vk_shared_res->shared_device;
+            allocatorCreateInfo.instance = VulkanInstance::getInstance().getVkInstance();
+//        allocatorCreateInfo.flags;
+            VK_EXPR(vmaCreateAllocator(&allocatorCreateInfo,&renderer_vk_res->allocator));
+        }
+        //create shader ubo
+        {
+            VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            bufferInfo.size = sizeof(VolumeInfo);
+            bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+
+            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->volumeInfoUBO.buffer,&renderer_vk_res->volumeInfoUBO.allocation,nullptr));
+
+            bufferInfo.size = sizeof(RenderInfo);
+
+            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->renderInfoUBO.buffer,&renderer_vk_res->renderInfoUBO.allocation,nullptr));
+
+            bufferInfo.size = sizeof(HashTable);
+
+            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->pageTableUBO.buffer,&renderer_vk_res->pageTableUBO.allocation,nullptr));
+        }
 
         //create descriptor sets
         {
+            VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocateInfo.descriptorPool = render_vk_shared_res->descriptorPool;
+            allocateInfo.descriptorSetCount = 1;
+            allocateInfo.pSetLayouts = &render_vk_shared_res->rayCastLayout;
+            VK_EXPR(vkAllocateDescriptorSets(render_vk_shared_res->shared_device,&allocateInfo,&renderer_vk_res->descriptorSet));
             //none for ray pos
 
             //ray cast
@@ -643,13 +678,13 @@ struct VulkanVolumeRenderer::Impl{
                 rayExitImageInfo.sampler = VK_NULL_HANDLE;
 
                 VkDescriptorImageInfo tfImageInfo{};
-                tfImageInfo.imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR;
+                tfImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 tfImageInfo.imageView = renderer_vk_res->tf.view;
                 tfImageInfo.sampler = renderer_vk_res->tf.sampler;
 
                 std::vector<VkDescriptorImageInfo> volumeImageInfo(node_vk_res->textures.size());
                 for(int i = 0;i<volumeImageInfo.size();i++){
-                    volumeImageInfo[i].imageLayout = VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL_KHR;
+                    volumeImageInfo[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                     volumeImageInfo[i].imageView = node_vk_res->textures[i].view;
                     volumeImageInfo[i].sampler = node_vk_res->texture_sampler;
                 }
@@ -729,36 +764,8 @@ struct VulkanVolumeRenderer::Impl{
                 vkUpdateDescriptorSets(device,descriptorWrites.size(),descriptorWrites.data(),0,nullptr);
             }
         }
-        //create vma allocator
-        {
-            VmaAllocatorCreateInfo allocatorCreateInfo{};
-            allocatorCreateInfo.vulkanApiVersion = VK_API_VERSION_1_2;
-            allocatorCreateInfo.physicalDevice = node_vk_res->physicalDevice;
-            allocatorCreateInfo.device = render_vk_shared_res->shared_device;
-            allocatorCreateInfo.instance = VulkanInstance::getInstance().getVkInstance();
-//        allocatorCreateInfo.flags;
-            VK_EXPR(vmaCreateAllocator(&allocatorCreateInfo,&renderer_vk_res->allocator));
-        }
-        //create shader ubo
-        {
-            VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-            bufferInfo.size = sizeof(VolumeInfo);
-            bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
-            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-            VmaAllocationCreateInfo allocInfo{};
-            allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
 
-            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->volumeInfoUBO.buffer,&renderer_vk_res->volumeInfoUBO.allocation,nullptr));
-
-            bufferInfo.size = sizeof(RenderInfo);
-
-            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->renderInfoUBO.buffer,&renderer_vk_res->renderInfoUBO.allocation,nullptr));
-
-            bufferInfo.size = sizeof(HashTable);
-
-            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->pageTableUBO.buffer,&renderer_vk_res->renderInfoUBO.allocation,nullptr));
-        }
         //create proxy cube buffer
         {
 
@@ -813,9 +820,6 @@ struct VulkanVolumeRenderer::Impl{
             {
 
                 vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shared_renderer_vk_res->pipeline.rayPos);
-                vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        render_vk_shared_res->pipelineLayout.rayPos,
-                                        0,0,nullptr,0,nullptr);
                 VkDeviceSize offsets[]={0};
                 vkCmdBindVertexBuffers(cmd,0,1,&renderer_vk_res->proxyCubeBuffer.vertexBuffer,offsets);
                 vkCmdBindIndexBuffer(cmd,renderer_vk_res->proxyCubeBuffer.indexBuffer,0,VK_INDEX_TYPE_UINT32);
@@ -1145,10 +1149,19 @@ static void CreateVulkanVolumeRendererSharedResources(
             colorBlending.blendConstants[2] = 0.f;
             colorBlending.blendConstants[3] = 0.f;
 
+            std::array<VkPushConstantRange,2> pcs{};
+            pcs[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+            pcs[0].offset = 0;
+            pcs[0].size = sizeof(Matrix4f)*2;
+            pcs[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            pcs[1].offset = sizeof(Matrix4f)*2;
+            pcs[1].size = sizeof(Vector4f);
             VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
             pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             pipelineLayoutInfo.setLayoutCount = 0;
             pipelineLayoutInfo.pSetLayouts = nullptr;
+            pipelineLayoutInfo.pushConstantRangeCount = pcs.size();
+            pipelineLayoutInfo.pPushConstantRanges = pcs.data();
 
             VK_EXPR(vkCreatePipelineLayout(device,&pipelineLayoutInfo,nullptr,&renderer_vk_res->pipelineLayout.rayPos));
 
@@ -1295,7 +1308,7 @@ static void CreateVulkanVolumeRendererSharedResources(
     //create descriptor pool
 
     {
-        std::array<VkDescriptorPoolSize,4> poolSize{};
+        std::array<VkDescriptorPoolSize,3> poolSize{};
         poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSize[0].descriptorCount = max_renderer_num * (3+1);
         poolSize[1].type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
@@ -1336,7 +1349,7 @@ VulkanVolumeRenderer* VulkanVolumeRenderer::Create(VulkanNodeSharedResourceWrapp
     }
     catch (const std::exception& err)
     {
-        LOG_ERROR("create vulkan volume renderer implement failed");
+        LOG_ERROR("create vulkan volume renderer implement failed: {}",err.what());
         return nullptr;
     }
     return ret;

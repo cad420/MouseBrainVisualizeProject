@@ -92,6 +92,8 @@ void SetupVulkanRendererSharedResources(VulkanNodeSharedResourceWrapper* node_vk
     renderer_vk_res->shared_device = node_vk_res->device;
     vkGetDeviceQueue(node_vk_res->device,node_vk_res->graphicsQueueFamilyIndex,0,&renderer_vk_res->shared_graphics_queue);
     assert(renderer_vk_res->shared_graphics_queue);
+    //todo fix
+    renderer_vk_res->shared_graphics_command_pool = node_vk_res->graphicsCommandPool;
 }
 VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat *depthFormat)
 {
@@ -153,9 +155,7 @@ void createImage(VkPhysicalDevice physicalDevice,VkDevice device,
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.flags = 0;//optional
 
-    if(vkCreateImage(device,&imageInfo, nullptr,&image)!=VK_SUCCESS){
-        throw std::runtime_error("failed to create image!");
-    }
+    VK_EXPR(vkCreateImage(device,&imageInfo, nullptr,&image));
 
     VkMemoryRequirements memRequirements;
     vkGetImageMemoryRequirements(device,image,&memRequirements);

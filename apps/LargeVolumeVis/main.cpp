@@ -70,7 +70,15 @@ void Run(){
     block_volume_manager.init();
 
     GPUResource gpu_resource(0);
-
+    GPUResource::ResourceDesc desc{};
+    desc.type = mrayns::GPUResource::Texture;
+    desc.width = 1024;
+    desc.height = 1024;
+    desc.depth = 1024;
+    desc.pitch = 1024;
+    desc.block_length = volume.getBlockLength();
+    for(int i = 0;i < 3; i++)
+        gpu_resource.createGPUResource(desc);
 
     auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
 
@@ -110,7 +118,7 @@ void Run(){
       //需要得到不同lod的相交块
       auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
       int intersect_block_count = intersect_blocks.size();
-      LOG_INFO("volume render missed block count: {}",intersect_block_count);
+      LOG_INFO("volume render intersect block count: {}",intersect_block_count);
 
       //3.1 assign task to different GPUResource
       //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
@@ -120,31 +128,32 @@ void Run(){
       //暂时不考虑多个GPU数量
       //3.2 compute cached blocks and missed blocks
       std::vector<Volume::BlockIndex> missed_blocks;
-      std::vector<Volume::BlockIndex> cached_blocks;//should release
+      std::vector<Renderer::PageTableItem> cur_renderer_page_table;
       auto& page_table = gpu_resource.getPageTable();
       page_table.acquireLock();
-      for(const auto& block:intersect_blocks){
-          if(page_table.queryAndLock(block)){
-              cached_blocks.emplace_back(block);
+      auto query_ret = page_table.queriesAndLockExt(intersect_blocks);
+      for(const auto& ret:query_ret){
+          if(ret.cached){
+              cur_renderer_page_table.emplace_back(ret.entry,ret.value);
           }
           else{
-              missed_blocks.emplace_back(block);
+              missed_blocks.emplace_back(ret.value);
           }
       }
       //此时获取保证其之后不会被上传写入 一定需要此处上传
-      auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);
+      auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);//不一定等同于missed_blocks
       page_table.acquireRelease();
-      std::unordered_map<Volume::BlockIndex,PageTable::EntryItem> block_entries;
+      std::unordered_map<Volume::BlockIndex,PageTable::EntryItem> block_entries;//真正需要上传的数据块
       std::mutex block_entries_mtx;
+      missed_blocks.clear();//重新生成
       for(const auto& entry:missed_block_entries){
-          if(entry.cached){
-              cached_blocks.emplace_back(entry.value);
-          }
-          else{
+          if(!entry.cached){
               block_entries[entry.value] = entry.entry;
+              missed_blocks.emplace_back(entry.value);
           }
+          cur_renderer_page_table.emplace_back(entry.entry,entry.value);
       }
-
+      LOG_INFO("volume render missed block count: {}",missed_blocks.size());
       //4 get block and upload
 
       auto task = [&](int thread_idx,Volume::BlockIndex block_index){
@@ -175,19 +184,22 @@ void Run(){
           page_table.update(block);
       }
 
+      volume_renderer->updatePageTable(cur_renderer_page_table);
+
       //如果一次性获取的数据块数量超过内存的最大储量怎么办
 
 
       //5 render and merge result
       //5.1 render
+
       volume_renderer->render(renderer_camera);
       //5.2 release read lock for page table
-      for(const auto& block:missed_blocks){
+      for(const auto& block:intersect_blocks){
           page_table.release(block);
       }
 
 
-      auto& ret = volume_renderer->getFrameBuffers().getColors();
+      const auto& ret = volume_renderer->getFrameBuffers().getColors();
 
       /**
        * 在这里如果是切分任务渲染的话 需要对渲染结果进行融合拼接

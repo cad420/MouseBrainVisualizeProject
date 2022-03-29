@@ -66,6 +66,7 @@ class GPUResource{
         int pitch;
         int height;
         int depth;
+        int block_length;
     };
     struct ResourceExtent{
         int width;
