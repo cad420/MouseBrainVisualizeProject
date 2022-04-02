@@ -10,7 +10,11 @@ struct BoundBox{
     Vector3f min_p;
     Vector3f max_p;
 };
-
+inline bool Contain(const BoundBox& box,const Vector3f& point){
+    return box.min_p.x <= point.x && point.x <= box.max_p.x
+        && box.min_p.y <= point.y && point.y <= box.max_p.y
+        && box.min_p.z <= point.z && point.z <= box.max_p.z;
+}
 inline BoundBox UnionBoundBox(const BoundBox& b1,const BoundBox& b2){
     return BoundBox{
         {
@@ -67,6 +71,10 @@ struct Frustum{
         Plane* Planes = reinterpret_cast<Plane*>(this);
         return Planes[static_cast<size_t>(Idx)];
     }
+};
+
+struct FrustumExt: public Frustum{
+    Vector3f frustum_corners[8];
 };
 
 MRAYNS_END

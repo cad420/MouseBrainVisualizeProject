@@ -78,9 +78,33 @@ struct GeometryHelper{
 
         // Far clipping plane
         frustum.far_plane.normal.x = matrix[0][3] - matrix[0][2];
-        frustum.far_plane.normal.y = matrix[1][3] - matrix[1][3];
+        frustum.far_plane.normal.y = matrix[1][3] - matrix[1][2];
         frustum.far_plane.normal.z = matrix[2][3] - matrix[2][2];
         frustum.far_plane.D = matrix[3][3] - matrix[3][2];
+    }
+
+    static void ExtractViewFrustumPlanesFromMatrix(const Matrix4f& matrix, FrustumExt& frustumExt, bool is_OpenGL = false){
+        ExtractViewFrustumPlanesFromMatrix(matrix,static_cast<Frustum&>(frustumExt),is_OpenGL);
+
+        Matrix4f  inv_matrix = inverse(matrix);
+        auto id = matrix * inv_matrix;
+        float near_clip_z = is_OpenGL ? -1.f : 0.f;
+        static const Vector3f proj_space_corners[] = {
+            Vector3f(-1,-1,near_clip_z),
+            Vector3f(1,-1,near_clip_z),
+            Vector3f(-1,1,near_clip_z),
+            Vector3f(1,1,near_clip_z),
+
+            Vector3f(-1,-1,1),
+            Vector3f(1,-1,1),
+            Vector3f(-1,1,1),
+            Vector3f(1,1,1)
+        };
+        for(int i = 0 ; i < 8 ; i++){
+            //千万别乘反了
+            auto t = inv_matrix * Vector4f(proj_space_corners[i],1.f) ;
+            frustumExt.frustum_corners[i] = Vector3f(t.x / t.w, t.y / t.w, t.z / t.w);
+        }
     }
 
     static BoxVisibility GetBoxVisibilityAgainstPlane(const Plane& plane,
@@ -119,6 +143,45 @@ struct GeometryHelper{
                 num_planes_inside++;
         }
         return (num_planes_inside == Frustum::NUM_PLANES) ? BoxVisibility::FullyVisible : BoxVisibility::Intersecting ;
+    }
+
+    static BoxVisibility GetBoxVisibility(const FrustumExt& frustumExt,
+                                          const BoundBox& box){
+        auto visibility = GetBoxVisibility(static_cast<const Frustum&>(frustumExt),box);
+        if(visibility == BoxVisibility::FullyVisible || visibility == BoxVisibility::Invisible)
+            return visibility;
+
+        // Additionally test if the whole frustum is outside one of
+        // the the bounding box planes. This helps in the following situation:
+        //
+        //
+        //       .
+        //      /   '  .       .
+        //     / AABB  /   . ' |
+        //    /       /. '     |
+        //       ' . / |       |
+        //       * .   |       |
+        //           ' .       |
+        //               ' .   |
+        //                   ' .
+
+        // Test all frustum corners against every bound box plane
+        for(int i_box_plane = 0; i_box_plane < 6; ++i_box_plane){
+            float cur_plane_coord = reinterpret_cast<const float*>(&box)[i_box_plane];
+            int i_coord_order = i_box_plane % 3;// 0 1 2 min_p  0 1 2 max_p
+            float f_sign = (i_box_plane >= 3) ? +1.f : -1.f;//first three planes are yz(x) xz(y) xy(z)
+            bool all_corners_outside = true;
+            for(int i_corner = 0; i_corner < 8; i_corner++){
+                float cur_corner_coord = frustumExt.frustum_corners[i_corner][i_coord_order];
+                if(f_sign * (cur_plane_coord - cur_corner_coord) > 0){
+                    all_corners_outside = false;
+                    break;
+                }
+            }
+            if(all_corners_outside)
+                return BoxVisibility::Invisible;
+        }
+        return BoxVisibility::Intersecting;
     }
 
     static bool TestBoxValid(const BoundBox& box){
