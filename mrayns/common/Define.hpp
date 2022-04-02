@@ -18,3 +18,8 @@
 #define EXPORT
 #endif
 
+#ifdef NDEBUG
+#define DEBUG_WINDOWW
+#endif
+
+

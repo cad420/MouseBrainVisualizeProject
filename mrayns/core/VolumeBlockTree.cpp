@@ -6,6 +6,7 @@
 #include "../algorithm/GeometryHelper.hpp"
 #include "../common/Logger.hpp"
 #include <queue>
+#include <unordered_set>
 #include "../utils/Timer.hpp"
 MRAYNS_BEGIN
 
@@ -28,12 +29,12 @@ class VolumeBlockTreeImpl{
 
     const Volume& getVolume() const;
 
-    std::vector<BlockIndex> computeIntersectBlock(const Frustum& frustum,int level);
-
-    std::vector<BlockIndex> computeIntersectBlock(const BoundBox& box,int level);
-
     template <typename T>
-    std::vector<BlockIndex> computeIntersect(T&& t,int level);
+    std::vector<BlockIndex> computeIntersectBlock(T&& t,int level);
+
+    template<typename T>
+    std::vector<BlockIndex> computeIntersectBlock(T&& t, const VolumeRendererLodDist&,const Vector3f& viewPos);
+
   private:
     class OctTree{
     public:
@@ -150,6 +151,23 @@ class VolumeBlockTreeImpl{
             destroy();
         }
 
+
+        void traverse(std::function<void(OctNode*)> f){
+            if(!root) return;
+            std::queue<OctNode*> q;
+            q.push(root);
+            while(!q.empty()){
+                auto t = q.front();
+                q.pop();
+                f(t);
+                for(int i = 0;i < 8; i++){
+                    if(t->kids[i]){
+                        q.push(t->kids[i]);
+                    }
+                }
+            }
+        }
+
         OctNode* root;
         int levels;
     };
@@ -180,6 +198,11 @@ void VolumeBlockTreeImpl::buildTree(const Volume &volume)
     this->max_level = volume.getMaxLod();
     this->volume = volume;
     this->buildTree();
+    //transform to voxel space
+    this->oct_tree.traverse([this](OctTree::OctNode* node){
+       node->box.min_p *= this->volume.getVolumeSpace();
+       node->box.max_p *= this->volume.getVolumeSpace();
+    });
     STOP_TIMER("build VolumeBlockTree")
 }
 void VolumeBlockTreeImpl::clearTree()
@@ -193,12 +216,75 @@ const Volume &VolumeBlockTreeImpl::getVolume() const
     return volume;
 }
 
-//按照普通的算法 首先计算lod0相交的块 然后更具lod-dist策略进行淘汰更换得到lod更大的块
+//按照普通的算法 首先计算lod0相交的块 然后根据lod-dist策略进行淘汰更换得到lod更大的块
 //这样子会很慢 因为当视锥体很大时候 lod0相交的块十分多 时间可能需要十几ms的代价
 //另一种策略是 从最大的lod这一层开始 如果当前层的块相交 那么求得视点与该块的最近距离所mapping的lod 对该块的子节点递归求交直到lod小于刚求的最小lod
 
+template <typename ViewSpace>
+std::vector<Volume::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(ViewSpace&& viewSpace,const VolumeRendererLodDist &lodDist,const Vector3f& viewPos)
+{
+    START_TIMER
+    std::vector<BlockIndex> intersect_blocks;
+
+    std::function<int(const BoundBox&)> lodComputer = [&](const BoundBox& box)->int{
+        auto block_center = (box.max_p + box.min_p) * 0.5f;
+        float dist = length(block_center-viewPos);
+        for(int i = 0;i<VolumeRendererLodDist::MaxLod;i++){
+            if(dist < lodDist.lod_dist[i]){
+                return i;
+            }
+        }
+        return VolumeRendererLodDist::MaxLod - 1;
+    };
+    std::vector<OctTree::OctNode*> leaves;
+    leaves.reserve(64);
+    std::unordered_set<OctTree::OctNode*> res;
+    std::queue<OctTree::OctNode*> q;
+    q.push(oct_tree.root);
+    while(!q.empty())
+    {
+        auto t = q.front();
+        assert(t);
+        q.pop();
+
+        if(GeometryHelper::GetBoxVisibility(viewSpace,t->box) == BoxVisibility::Intersecting)
+        {
+            if(t->level == 0)//is leaf
+            {
+                leaves.push_back(t);
+            }
+            else
+            {
+                for(int i = 0; i < 8 ; i++)
+                {
+                    if(t->kids[i])
+                    {
+                        q.push(t->kids[i]);
+                    }
+                }
+            }
+        }
+    }
+    for(auto leaf:leaves){
+        assert(leaf);
+        int lod = lodComputer(leaf->box);
+        while(lod-->0 && leaf->parent){
+            leaf = leaf->parent;
+        }
+        res.insert(leaf);
+    }
+
+    intersect_blocks.reserve(res.size());
+    for(auto b:res){
+        intersect_blocks.emplace_back(b->index);
+    }
+    LOG_INFO("intersect block count {} with lod-dist",intersect_blocks.size());
+    STOP_TIMER("compute intersect blocks with lod-dist");
+    return intersect_blocks;
+}
+
 template <typename T>
-std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeIntersect(T &&t, int level)
+std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(T &&t, int level)
 {
     std::vector<BlockIndex> intersect_blocks;
 
@@ -223,14 +309,6 @@ std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeInterse
     return intersect_blocks;
 }
 
-std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(const Frustum &frustum,int level)
-{
-    return computeIntersect(frustum,level);
-}
-std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(const BoundBox &box,int level)
-{
-    return computeIntersect(box,level);
-}
 void VolumeBlockTreeImpl::buildTree()
 {
 
@@ -256,7 +334,7 @@ const Volume &VolumeBlockTree::getVolume() const
 {
     return impl->getVolume();
 }
-std::vector<Volume::BlockIndex> VolumeBlockTree::computeIntersectBlock(const Frustum &frustum,int level)
+std::vector<Volume::BlockIndex> VolumeBlockTree::computeIntersectBlock(const FrustumExt &frustum,int level)
 {
     return impl->computeIntersectBlock(frustum,level);
 }
@@ -267,6 +345,10 @@ std::vector<Volume::BlockIndex> VolumeBlockTree::computeIntersectBlock(const Bou
 VolumeBlockTree::VolumeBlockTree()
 {
     impl = std::make_unique<VolumeBlockTreeImpl>();
+}
+std::vector<Volume::BlockIndex> VolumeBlockTree::computeIntersectBlock(const FrustumExt &frustum, const VolumeRendererLodDist& lodDist,const Vector3f& viewPos)
+{
+    return impl->computeIntersectBlock(frustum,lodDist,viewPos);
 }
 
 MRAYNS_END

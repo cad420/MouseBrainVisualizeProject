@@ -19,13 +19,16 @@ const bool enableValidationLayers = true;
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
+//    "VK_LAYER_RENDERDOC_Capture"
 };
 
 const std::vector<const char*> deviceExtensions = {
-
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 const std::vector<const char*> instanceExtensions = {
-    VK_EXT_DEBUG_REPORT_EXTENSION_NAME
+    VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
+    VK_KHR_SURFACE_EXTENSION_NAME,
+    "VK_KHR_win32_surface"
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugMessageCallback(
@@ -137,11 +140,11 @@ uint32_t getMemoryTypeIndex(VkPhysicalDevice physicalDevice,uint32_t typeBits, V
 void createImage(VkPhysicalDevice physicalDevice,VkDevice device,
                  uint32_t width, uint32_t height, uint32_t mipLevels, VkSampleCountFlagBits numSamples, VkFormat format,
                  VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage &image,
-                 VkDeviceMemory &imageMemory)
+                 VkDeviceMemory &imageMemory,VkImageType type)
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.imageType = type;
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
@@ -240,6 +243,32 @@ VkVertexInputAttributeDescription getVertexAttributeDescription()
 
     return attributeDescription;
 }
+void createBuffer(VkPhysicalDevice physicalDevice, VkDevice device, VkDeviceSize size, VkBufferUsageFlags usage,
+                  VkMemoryPropertyFlags properties, VkBuffer &buffer, VkDeviceMemory &bufferMemory)
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if(vkCreateBuffer(device,&bufferInfo,nullptr,&buffer)!=VK_SUCCESS){
+        throw std::runtime_error("failed to create buffer!");
+    }
+
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device,buffer,&memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = getMemoryTypeIndex(physicalDevice,memRequirements.memoryTypeBits,properties);
+
+    if(vkAllocateMemory(device,&allocInfo,nullptr,&bufferMemory)!=VK_SUCCESS){
+        throw std::runtime_error("failed to allocate buffer memory!");
+    }
+    vkBindBufferMemory(device,buffer,bufferMemory,0);
+}
 
 struct VulkanInstance::Impl{
     VkInstance instance;
@@ -275,7 +304,7 @@ struct VulkanInstance::Impl{
             createInfo.enabledLayerCount = validationLayers.size();
         }
 
-        vkCreateInstance(&createInfo,nullptr,&instance);
+        VK_EXPR(vkCreateInstance(&createInfo,nullptr,&instance));
 
         assert(instance);
 

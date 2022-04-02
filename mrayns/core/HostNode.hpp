@@ -24,11 +24,20 @@ class HostNode{
 
     using GPUCap = size_t;
     GPUCap getGPUCap(int GPUIndex);
-
+    enum Type:int{
+        Codec=0,Graphic=1,Compute=2
+    };
+    struct CPUTask{
+        Type type;
+        int time_cost = 0;
+        int thread_count = 0;
+        int memory_cost = 0;
+        bool isValid() const{
+            return time_cost > 0 && thread_count >0 && memory_cost >0 && type != Graphic;
+        }
+    };
     struct GPUTask{
-        enum Type:int{
-            Codec=0,Graphic=1,Compute=2
-        };
+
         Type type;
         int time_cost{0};
         int resource_cost{0};
@@ -50,11 +59,11 @@ class HostNode{
 
     void eraseGPUTask(TaskHandle handle);
 
-    std::vector<GPUTask> getGPUTasks(int GPUIndex,GPUTask::Type type);
+    std::vector<GPUTask> getGPUTasks(int GPUIndex,Type type);
 
     std::vector<GPUTask> getGPUTasks(int GPUIndex);
 
-    std::vector<GPUTask> getGPUTasks(GPUTask::Type type);
+    std::vector<GPUTask> getGPUTasks(Type type);
 
     std::vector<GPUTask> getGPUTasks();
   private:

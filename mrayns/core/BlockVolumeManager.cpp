@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include "../common/Logger.hpp"
+#include "../utils/Timer.hpp"
 MRAYNS_BEGIN
 
 struct BlockVolumeManager::BlockVolumeManagerImpl{
@@ -156,7 +157,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     BlockVolumeManagerImpl(){
         //todo
         memory_block_size = 512 * 512 *512;
-        memory_block_count = 16;
+        memory_block_count = 64;
         for(int i = 0;i<memory_block_count;i++){
             MemoryBlockDesc desc;
             desc.memory_block.size = memory_block_size;
@@ -497,12 +498,18 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
     //todo 会导致存储两个相同的Block
     //1. query from cache if the block data is already cached
     auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex);
-    if(block.isValid()) return block.data;
+    if(block.isValid()){
+        impl->recordPtrForBlockIndex(block.data, blockIndex);
+        return block.data;
+    }
     //2. if not cached, request data from provider
     block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     //3. if sync wait for complete or async return immediately
 
+    START_TIMER
     provider->getVolumeBlock(block.data,blockIndex);
+    STOP_TIMER("get volume block");
+
     bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex,true);
     assert(ret);
 

@@ -56,8 +56,8 @@ struct VulkanRendererResourceWrapper
     //shared for same type renderer but not shared with each other
     //some static resource for the type of renderer
 
-    inline static int DefaultFrameWidth = 1920;
-    inline static int DefaultFrameHeight = 1080;
+    inline static int DefaultFrameWidth = 1280;
+    inline static int DefaultFrameHeight = 720;
 
 
 //    VkCommandPool graphicsPool;//should use for transfer page table and proxy cube data
@@ -94,8 +94,12 @@ struct VulkanNodeSharedResourceWrapper{
     //VK_FORMAT_R8_UNORM specifies a one-component, 8-bit unsigned normalized format that has a single 8-bit R component
     struct TextureWrapper{
         VkImage image;
-//        VkDeviceMemory mem;
+#ifdef DEBUG_WINDOW
+        VkDeviceMemory mem;//debug
+#else
         VmaAllocation allocation;
+#endif
+
         VkImageView view;
         VkExtent3D extent;
     };
@@ -135,9 +139,13 @@ uint32_t getMemoryTypeIndex(VkPhysicalDevice physicalDevice,uint32_t typeBits, V
 void createImage(VkPhysicalDevice physicalDevice,VkDevice device,uint32_t width,uint32_t height,uint32_t mipLevels,
                  VkSampleCountFlagBits numSamples,VkFormat format,
                  VkImageTiling tiling,VkImageUsageFlags usage,VkMemoryPropertyFlags properties,
-                 VkImage& image,VkDeviceMemory& imageMemory);
+                 VkImage& image,VkDeviceMemory& imageMemory,VkImageType type = VK_IMAGE_TYPE_2D);
 
 void createImageView(VkDevice device,VkImage image,VkFormat format,VkImageAspectFlags aspectFlags,uint32_t mipLevels,VkImageView& imageView);
+
+void createBuffer(VkPhysicalDevice physicalDevice,VkDevice device,
+                  VkDeviceSize size,VkBufferUsageFlags usage,VkMemoryPropertyFlags properties,
+                  VkBuffer& buffer,VkDeviceMemory& bufferMemory);
 
 std::vector<char> readShaderFile(const std::string& filename);
 

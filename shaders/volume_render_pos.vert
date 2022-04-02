@@ -9,12 +9,12 @@ out gl_PerVertex {
     vec4 gl_Position;
 };
 
-layout(push_constant) uniform PushConsts {
+layout(binding = 0) uniform MVPMatrix {
     mat4 mvp;
     mat4 model;
-} vPushConsts;
+} mvpMatrix;
 
 void main() {
-    oVertexPos = vec3(vPushConsts.model * vec4(iVertexPos,1.f));
-    gl_Position = vPushConsts.mvp * vec4(iVertexPos,1.f);
+    oVertexPos = vec3(mvpMatrix.model * vec4(iVertexPos,1.f));
+    gl_Position = mvpMatrix.mvp * vec4(iVertexPos,1.f);
 }

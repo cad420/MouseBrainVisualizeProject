@@ -28,7 +28,7 @@ struct CameraExt: public Camera{
 
 struct VolumeRendererLodDist{
     static constexpr int MaxLod = 12;
-    float lod_dist[MaxLod] = {0.f};
+    float lod_dist[MaxLod] = {std::numeric_limits<float>::max()};
 };
 struct VolumeRendererSortFirstDesc{
 

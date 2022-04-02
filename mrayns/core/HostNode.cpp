@@ -25,7 +25,7 @@ struct HostNode::Impl{
         gpu_tasks.erase(handle);
     }
 
-    std::vector<GPUTask> getGPUTask(GPUTask::Type type,int GPUIndex){
+    std::vector<GPUTask> getGPUTask(Type type,int GPUIndex){
         std::lock_guard<std::mutex> lk(task_mtx);
         std::vector<GPUTask> tasks;
         for(auto& item:gpu_tasks){
@@ -81,14 +81,14 @@ std::vector<HostNode::GPUTask> HostNode::getGPUTasks()
     std::vector<GPUTask> tasks;
     for(int i = 0;i<gpu_num;i++){
         for(int j = 0;j<3;j++){
-            auto task = impl->getGPUTask(static_cast<GPUTask::Type>(j),i);
+            auto task = impl->getGPUTask(static_cast<Type>(j),i);
             tasks.insert(tasks.end(),task.begin(),task.end());
         }
     }
 
     return tasks;
 }
-std::vector<HostNode::GPUTask> HostNode::getGPUTasks(int GPUIndex, GPUTask::Type type)
+std::vector<HostNode::GPUTask> HostNode::getGPUTasks(int GPUIndex, Type type)
 {
     return impl->getGPUTask(type,GPUIndex);
 }
@@ -96,12 +96,12 @@ std::vector<HostNode::GPUTask> HostNode::getGPUTasks(int GPUIndex)
 {
     std::vector<GPUTask> tasks;
     for(int i = 0;i<3;i++){
-        auto task = impl->getGPUTask(static_cast<GPUTask::Type>(i),GPUIndex);
+        auto task = impl->getGPUTask(static_cast<Type>(i),GPUIndex);
         tasks.insert(tasks.end(),task.begin(),task.end());
     }
     return tasks;
 }
-std::vector<HostNode::GPUTask> HostNode::getGPUTasks(GPUTask::Type type)
+std::vector<HostNode::GPUTask> HostNode::getGPUTasks(Type type)
 {
     std::vector<GPUTask> tasks;
     for(int i = 0;i<3;i++){

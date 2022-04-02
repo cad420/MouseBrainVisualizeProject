@@ -31,6 +31,7 @@ target_link_libraries(
         glm::glm
         PRIVATE
         ${Vulkan_LIBRARY}
+        glfw
 )
 
 target_compile_features(

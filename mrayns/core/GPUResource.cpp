@@ -4,7 +4,7 @@
 #include "GPUResource.hpp"
 #include <cassert>
 #include "../common/Logger.hpp"
-
+#include "../utils/Timer.hpp"
 #include "internal/VulkanUtil.hpp"
 #include <set>
 #include "internal/VulkanVolumeRenderer.hpp"
@@ -55,6 +55,7 @@ struct GPUResource::Impl{
     struct StagingBuffer{
         VkBuffer buffer;
         VmaAllocation allocation;
+        VmaAllocationInfo allocInfo;
     };
     //https://stackoverflow.com/questions/31112852/how-stdunordered-map-is-implemented
     //unordered_map is thread-safe even each thread write different key for value
@@ -305,6 +306,13 @@ struct GPUResource::Impl{
         imageCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
         VmaAllocationCreateInfo allocInfo{};
         allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        //sb!!! buffer alloc by vma can't use in RenderDoc
+
+#ifdef DEBUG_WINDOW
+        internal::createImage(node_vulkan_res->physicalDevice,node_vulkan_res->device,width,height,1,VK_SAMPLE_COUNT_1_BIT,
+                              VK_FORMAT_R8_UNORM,VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,texture.image,texture.mem,VK_IMAGE_TYPE_3D);
+#else
         auto res = vmaCreateImage(node_vulkan_res->allocator,&imageCreateInfo,&allocInfo,&texture.image,&texture.allocation,nullptr);
         if(res !=VK_SUCCESS){
             LOG_INFO("vma alloc texture memory failed");
@@ -313,7 +321,7 @@ struct GPUResource::Impl{
         else{
             LOG_INFO("vma alloc texture memory successfully");
         }
-
+#endif
         VkImageViewCreateInfo viewCreateInfo{};
         viewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewCreateInfo.image = texture.image;
@@ -418,8 +426,12 @@ struct GPUResource::Impl{
         bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
         VmaAllocationCreateInfo allocInfo{};
-        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        auto res = vmaCreateBuffer(node_vulkan_res->allocator,&bufferCreateInfo,&allocInfo,&stagingBuffer.buffer,&stagingBuffer.allocation,nullptr);
+        allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+        allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT  |
+                          VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        START_TIMER
+        auto res = vmaCreateBuffer(node_vulkan_res->allocator,&bufferCreateInfo,&allocInfo,&stagingBuffer.buffer,&stagingBuffer.allocation,&stagingBuffer.allocInfo);
+        STOP_TIMER("create staging buffer cost")
         if(res == VK_SUCCESS){
             LOG_INFO("create staging buffer for size({}) successfully",size);
             return true;
@@ -511,14 +523,15 @@ struct GPUResource::Impl{
         return true;
     }
     void copyToStagingBuffer(const StagingBuffer& stagingBuffer,void* data,size_t size){
-        void* p;
-//        VK_EXPR(vkMapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory(),0,size,0,&p));
-        VK_EXPR(vmaMapMemory(node_vulkan_res->allocator,stagingBuffer.allocation,&p));
-        memcpy(data,p,size);
-//        vkUnmapMemory(node_vulkan_res->device,stagingBuffer.allocation->GetMemory());
-        vmaUnmapMemory(node_vulkan_res->allocator,stagingBuffer.allocation);
+//        void* p;
+//        VK_EXPR(vmaMapMemory(node_vulkan_res->allocator,stagingBuffer.allocation,&p));
+        START_TIMER
+        memcpy(stagingBuffer.allocInfo.pMappedData,data,size);//copy to host mem need time more than normal cpu memcpy
+        STOP_TIMER("copy to staging buffer")
+//        vmaUnmapMemory(node_vulkan_res->allocator,stagingBuffer.allocation);
     }
     void flushStagingBufferAndRelease(size_t threadID){
+        START_TIMER
         std::vector<VkCommandBuffer> cmd;
         VkSubmitInfo submitInfo{};
         {
@@ -544,7 +557,8 @@ struct GPUResource::Impl{
                 vkFreeCommandBuffers(node_vulkan_res->device, node_vulkan_res->transferCommandPool, 1, &commandBuffer);
             }
         }
-
+        STOP_TIMER("flush staging buffer")
+        LOG_DEBUG("flush staging buffer to gpu texture");
     }
     //internal
     void flushStagingBufferAndRelease(){
@@ -642,9 +656,10 @@ std::vector<GPUResource::ResourceDesc> GPUResource::getGPUResourceDesc()
 bool GPUResource::uploadResource(
     GPUResource::ResourceDesc desc, PageTable::EntryItem entryItem, ResourceExtent extent,void *src, size_t size,bool sync)
 {
+    return false;
     if(desc.type!=Texture) return false;
 
-    auto thread_id = std::this_thread::get_id();
+    auto thread_id = desc.id;
     LOG_INFO("GPUResource::uploadResource called thread id: {}",std::hash<decltype(thread_id)>()(thread_id));
 
     auto extent_size = size_t(extent.width) * extent.height * extent.depth;
@@ -659,16 +674,14 @@ bool GPUResource::uploadResource(
     }
     else{
         return impl->updateTextureSubImage3DAsync(
-            std::hash<decltype(thread_id)>()(thread_id),
+            thread_id,
                 texID,srcX,srcY,srcZ,extent.width,extent.height,extent.depth,src);
     }
 }
 
-void GPUResource::flush()
+void GPUResource::flush(size_t tid)
 {
-    auto thread_id = std::this_thread::get_id();
-    LOG_INFO("GPUResource::flush called thread id: {}",std::hash<decltype(thread_id)>()(thread_id));
-    impl->flushStagingBufferAndRelease(std::hash<decltype(thread_id)>()(thread_id));
+    impl->flushStagingBufferAndRelease(tid);
 }
 
 void GPUResource::downloadResource(

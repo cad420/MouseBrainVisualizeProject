@@ -14,13 +14,13 @@ struct GPUTaskScheduleHelper{
     static int DefaultGPUTaskCodecEvaluator(const HostNode::GPUTask& task){
         assert(task.isValid());
         int burden = 0;
-        if(task.type == HostNode::GPUTask::Codec){
+        if(task.type == HostNode::Codec){
             burden += task.resource_cost * task.time_cost * 2;
         }
-        else if(task.type == HostNode::GPUTask::Graphic){
+        else if(task.type == HostNode::Graphic){
             burden += task.time_cost * task.resource_cost * 1;
         }
-        else if(task.type == HostNode::GPUTask::Compute){
+        else if(task.type == HostNode::Compute){
             burden += task.time_cost * task.resource_cost * 1;
         }
         return burden;
@@ -30,13 +30,13 @@ struct GPUTaskScheduleHelper{
     static int DefaultGPUTaskGraphicEvaluator(const HostNode::GPUTask& task){
         assert(task.isValid());
         int burden = 0;
-        if(task.type == HostNode::GPUTask::Codec){
+        if(task.type == HostNode::Codec){
             burden += task.resource_cost * task.time_cost * 1;
         }
-        else if(task.type == HostNode::GPUTask::Graphic){
+        else if(task.type == HostNode::Graphic){
             burden += task.time_cost * task.resource_cost * 3;
         }
-        else if(task.type == HostNode::GPUTask::Compute){
+        else if(task.type == HostNode::Compute){
             burden += task.time_cost * task.resource_cost * 2;
         }
         return burden;
@@ -46,13 +46,13 @@ struct GPUTaskScheduleHelper{
     static int DefaultGPUTaskComputeEvaluator(const HostNode::GPUTask& task){
         assert(task.isValid());
         int burden = 0;
-        if(task.type == HostNode::GPUTask::Codec){
+        if(task.type == HostNode::Codec){
             burden += task.resource_cost * task.time_cost * 1;
         }
-        else if(task.type == HostNode::GPUTask::Graphic){
+        else if(task.type == HostNode::Graphic){
             burden += task.time_cost * task.resource_cost * 2;
         }
-        else if(task.type == HostNode::GPUTask::Compute){
+        else if(task.type == HostNode::Compute){
             burden += task.time_cost * task.resource_cost * 3;
         }
         return burden;
@@ -64,13 +64,13 @@ struct GPUTaskScheduleHelper{
         assert(task.isValid());
         int burden = 0;
         int ratio = 0;
-        if(task.type == HostNode::GPUTask::Codec){
+        if(task.type == HostNode::Codec){
             ratio = 1;
         }
-        else if(task.type == HostNode::GPUTask::Graphic){
+        else if(task.type == HostNode::Graphic){
             ratio = 2;
         }
-        else if(task.type == HostNode::GPUTask::Compute){
+        else if(task.type == HostNode::Compute){
             ratio = 2;
         }
         burden += ratio * task.resource_cost * task.time_cost;

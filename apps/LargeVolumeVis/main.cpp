@@ -4,6 +4,7 @@
 #include "core/BlockVolumeManager.hpp"
 #include "core/GPUResource.hpp"
 #include "core/VolumeBlockTree.hpp"
+#include "utils/Timer.hpp"
 #include "plugin/PluginLoader.hpp"
 #include "common/Logger.hpp"
 #include "common/Parrallel.hpp"
@@ -37,7 +38,9 @@ bool InitWindowContext(int w,int h){
         LOG_ERROR("create sdl renderer failed");
         return false;
     }
-    wc->frame = SDL_CreateTexture(wc->renderer,SDL_PIXELFORMAT_ABGR8888,SDL_TEXTUREACCESS_STREAMING,w,h);
+    //sdl ABGR8888 packed from high to low bit so it equal to RGBA32
+    //vulkan RGBA888 is from low to high so it equal to sdl RGBA32
+    wc->frame = SDL_CreateTexture(wc->renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,w,h);
     if(!wc->frame){
         LOG_ERROR("create sdl texture failed");
         return false;
@@ -77,10 +80,12 @@ void Run(){
     desc.depth = 1024;
     desc.pitch = 1024;
     desc.block_length = volume.getBlockLength();
-    for(int i = 0;i < 3; i++)
+    for(int i = 0;i < 8; i++)
         gpu_resource.createGPUResource(desc);
 
     auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
+
+    volume_renderer->setVolume(volume);
 
     const int frame_w = 1280;
     const int frame_h = 720;
@@ -90,12 +95,12 @@ void Run(){
     }
 
     CameraExt camera{};
-    camera.position = {12000.f,15000.f,11000.f};
-    camera.target = {12000.f,15000.f,10000.f};
+    camera.position = {5.92f,5.92f,7.9f};
+    camera.target = {5.92f,5.92f,7.f};
     camera.front = {0.f,0.f,-1.f};
     camera.up = {0.f,1.f,0.f};
-    camera.near_z = 1.f;
-    camera.far_z = 1000.f;
+    camera.near_z = 0.001f;
+    camera.far_z = 1.f;
     camera.width = frame_w;
     camera.height = frame_h;
     camera.aspect = static_cast<float>(frame_w) / static_cast<float>(frame_h);
@@ -103,23 +108,29 @@ void Run(){
     camera.pitch = 0.f;
 
 
+    int total_missed_count = 0;
 
-    auto volume_render = [&](){
-        VolumeRendererCamera renderer_camera{};
+    auto volume_render = [&]()->const Image&{
+
+
+      START_TIMER
+        VolumeRendererCamera renderer_camera{camera};
       //1. get current camera view and projection matrix
-      auto view_matrix = GeometryHelper::ExtractViewMatrixFromCamera(camera);
-      auto proj_matrix = GeometryHelper::ExtractProjMatrixFromCamera(camera);
+      auto view_matrix = GeometryHelper::ExtractViewMatrixFromCamera(renderer_camera);
+      auto proj_matrix = GeometryHelper::ExtractProjMatrixFromCamera(renderer_camera);
       auto vp = proj_matrix * view_matrix;
-      Frustum view_frustum{};
+      FrustumExt view_frustum{};
       GeometryHelper::ExtractViewFrustumPlanesFromMatrix(vp,view_frustum);
 
 
       //2. compute intersect blocks with current camera view frustum
       //需要得到不同lod的相交块
-      auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum);
+      auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum,renderer_camera.lod_dist,renderer_camera.position);
       int intersect_block_count = intersect_blocks.size();
       LOG_INFO("volume render intersect block count: {}",intersect_block_count);
-
+//      for(auto& b:intersect_blocks){
+//          LOG_INFO("intersect block {} {} {} {}",b.x,b.y,b.z,b.w);
+//      }
       //3.1 assign task to different GPUResource
       //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
       //分割并不是更高效利用GPU 而是用更多的GPU资源提升绘制速度 所以应该只在总的负载很小时开启
@@ -140,9 +151,11 @@ void Run(){
               missed_blocks.emplace_back(ret.value);
           }
       }
+      LOG_INFO("first time missed blocks count {}",missed_blocks.size());
       //此时获取保证其之后不会被上传写入 一定需要此处上传
       auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);//不一定等同于missed_blocks
       page_table.acquireRelease();
+      LOG_INFO("PageTable acquire release");
       std::unordered_map<Volume::BlockIndex,PageTable::EntryItem> block_entries;//真正需要上传的数据块
       std::mutex block_entries_mtx;
       missed_blocks.clear();//重新生成
@@ -154,13 +167,19 @@ void Run(){
           cur_renderer_page_table.emplace_back(entry.entry,entry.value);
       }
       LOG_INFO("volume render missed block count: {}",missed_blocks.size());
+      total_missed_count += missed_blocks.size();
+      LOG_INFO("total missed count since start render: {}",total_missed_count);
       //4 get block and upload
 
+      auto thread_id = std::this_thread::get_id();
+      auto tid = std::hash<decltype(thread_id)>()(thread_id);
       auto task = [&](int thread_idx,Volume::BlockIndex block_index){
+          //单机单线程模式下需要换一种写法
           auto p = block_volume_manager.getVolumeBlockAndLock(block_index);
           std::lock_guard<std::mutex> lk(block_entries_mtx);
           auto entry = block_entries[block_index];
           GPUResource::ResourceDesc desc;
+          desc.id = tid;
           desc.type = GPUResource::Texture;
           desc.width = volume.getBlockLength();
           desc.pitch = volume.getBlockLength();
@@ -173,12 +192,13 @@ void Run(){
               volume.getBlockLength()
           };
           gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),false);
-          block_volume_manager.unlock(p);
+          auto ret = block_volume_manager.unlock(p);
+          assert(ret);
       };
       //4.1 get volume block and upload to GPUResource
       parallel_foreach(missed_blocks,task,missed_blocks.size());
 
-      gpu_resource.flush();
+      gpu_resource.flush(tid);
       //4.2 release write to read lock
       for(const auto& block:missed_blocks){
           page_table.update(block);
@@ -187,17 +207,22 @@ void Run(){
       volume_renderer->updatePageTable(cur_renderer_page_table);
 
       //如果一次性获取的数据块数量超过内存的最大储量怎么办
-
+      STOP_TIMER("volume render prepare")
 
       //5 render and merge result
       //5.1 render
-
-      volume_renderer->render(renderer_camera);
+      {
+          START_TIMER
+          volume_renderer->render(renderer_camera);
       //5.2 release read lock for page table
-      for(const auto& block:intersect_blocks){
-          page_table.release(block);
-      }
 
+
+          for (const auto &block : intersect_blocks)
+          {
+              page_table.release(block);
+          }
+          STOP_TIMER("release page table")
+      }
 
       const auto& ret = volume_renderer->getFrameBuffers().getColors();
 
@@ -213,6 +238,8 @@ void Run(){
     bool exit = false;
     uint32_t delta_t = 0;
     uint32_t last_t = 0;
+    float camera_move_sense = 0.05f;
+    Vector3f world_up = {0.f,1.f,0.f};
     auto process_input = [&](bool& exit,uint32_t delta_t){
       static SDL_Event event;
       while(SDL_PollEvent(&event)){
@@ -234,7 +261,31 @@ void Run(){
           }
 
           case SDL_MOUSEMOTION:{
+              if (event.motion.state & SDL_BUTTON_LMASK)
+              {
+                  float x_offset = static_cast<float>(event.motion.xrel) * camera_move_sense;
+                  float y_offset = static_cast<float>(event.motion.yrel) * camera_move_sense;
 
+                  camera.yaw += x_offset;
+                  camera.pitch -= y_offset;
+
+                  if (camera.pitch > 89.f)
+                  {
+                      camera.pitch = 89.f;
+                  }
+                  else if (camera.pitch < -89.f)
+                  {
+                      camera.pitch = -89.f;
+                  }
+
+                  camera.front.x = std::cos(camera.pitch * M_PI / 180.f) * std::cos(camera.yaw * M_PI / 180.f);
+                  camera.front.y = std::sin(camera.pitch * M_PI / 180.f);
+                  camera.front.z = std::cos(camera.pitch * M_PI / 180.f) * std::sin(camera.yaw * M_PI / 180.f);
+                  camera.front = normalize(camera.front);
+                  camera.right = normalize(cross(camera.front, world_up));
+                  camera.up = normalize(cross(camera.right, camera.front));
+                  camera.target = camera.position + camera.front;
+              }
 
 
               break;
@@ -258,17 +309,22 @@ void Run(){
         last_t = SDL_GetTicks();
 
         process_input(exit,delta_t);
+        START_TIMER
+        const auto& colors = volume_render();
+        STOP_TIMER("volume render")
 
-        const auto& colors =  volume_render();
 
         sdl_draw(colors);
 
+
         delta_t = SDL_GetTicks() - last_t;
+        std::cout<<"delta_t: "<<delta_t<<std::endl;
     }
     LOG_INFO("exit main render loop");
 }
 
 int main(int argc,char** argv){
+    SET_LOG_LEVEL_DEBUG
     try{
         Run();
     }

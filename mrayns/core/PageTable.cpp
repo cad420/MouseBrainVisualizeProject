@@ -120,6 +120,9 @@ struct PageTable::Impl{
             }
 
         }
+        bool qfull(){
+            return q_size == q.size();
+        }
         bool full(){
             return q.size() == q_size && lru.get_load_factor() == 1.f;
         }
@@ -150,6 +153,7 @@ struct PageTable::Impl{
     using ReadLockItem = std::pair<LockItem,int>;
     using WriteLockItem = LockItem ;
     using CacheItem = LRU2::Item ;
+    //MQ just with priority and without eliminate
     struct MQ{
         static constexpr int MinP = 0;
         static constexpr int MaxP = 6;
@@ -159,7 +163,7 @@ struct PageTable::Impl{
         std::map<int,LRU2> mq;
         MQ(){
             for(int i = MinP;i<=MaxP;i++){
-                mq[i] = LRU2{4,4};
+                mq[i] = LRU2{64,64};
             }
         }
         size_t size(){
@@ -372,7 +376,7 @@ struct PageTable::Impl{
         read_cv.notify_one();
     }
     void pushToWriteLock(LockItem lockItem){
-        assert(queryValueItemStatus(lockItem.second)!=WriteLocked);
+//        assert(queryValueItemStatus(lockItem.second)!=WriteLocked);
         std::lock_guard<std::mutex> lk(write_mtx);
         page_table.write_locked_items.emplace_back(lockItem);
     }
@@ -455,6 +459,7 @@ struct PageTable::Impl{
                     if (item.second == 1)
                     {
                         move = true;
+                        break;
                     }
                     else
                     {
@@ -492,6 +497,7 @@ struct PageTable::Impl{
             auto status = queryValueItemStatus(value);
             if(status != ReadLocked && status != Cached){
                 ret.emplace_back(EntryItemExt{EntryItem{},value,false});
+                continue;
             }
             if(status == ReadLocked){
                 addReadLockForExisted(value);
@@ -525,6 +531,7 @@ struct PageTable::Impl{
         std::vector<EntryItemExt> ret;
         //1. 查询是否存在于WriteLock链表中
         //理论上  notify_one 通知的lk优先级更大 因为notify_one发生了 lk稀释之前???
+        LOG_INFO("111");
         std::vector<std::thread> tasks;
         std::vector<ValueItem> remains_after_write;
         for(const auto& value:values){
@@ -551,6 +558,7 @@ struct PageTable::Impl{
         for(auto& task:tasks) if(task.joinable()) task.join();
         if(remains_after_write.empty()) return ret;
         //2. 查询是否存在于ReadLock中
+        LOG_INFO("222");
         std::vector<ValueItem> remains_after_read;
         {
             std::lock_guard<std::mutex> lk(read_mtx);
@@ -571,6 +579,7 @@ struct PageTable::Impl{
         }
         if(remains_after_read.empty()) return ret;
         //3. 从Cache中获取EntryItem 在单线程中 可不用考虑
+        LOG_INFO("333");
         std::vector<ValueItem> remains_after_cached;
         {
             std::lock_guard<std::mutex> lk(cache_mtx);
@@ -588,6 +597,7 @@ struct PageTable::Impl{
         }
         if(remains_after_cached.empty()) return ret;
         //4. 从free entries中获取entry用于上传
+        LOG_INFO("444");
         std::vector<ValueItem> remains_after_free;
         {
             std::lock_guard<std::mutex> lk(free_mtx);
@@ -605,6 +615,7 @@ struct PageTable::Impl{
         }
         if(remains_after_free.empty()) return ret;
         //5. 淘汰Cache中某些Item从而获取EntryItem用于上传
+        LOG_INFO("555");
         {
             std::unique_lock<std::mutex> lk(cache_mtx);
 
@@ -612,15 +623,19 @@ struct PageTable::Impl{
             auto needed_size = remains_after_read.size();
             if (needed_size > cached_size)
             {
-                cache_cv.wait(lk, [&]() { return page_table.cached_items.size() > needed_size; });
+                cache_cv.wait(lk, [&]() {
+                    LOG_INFO("{} {}",page_table.cached_items.size(),needed_size);
+                    return page_table.cached_items.size() > needed_size;
+                });
             }
 
             for(const auto& value:remains_after_free){
                 auto item = page_table.cached_items.eliminate();
-                ret.emplace_back(EntryItemExt{item.second,item.first,false});
-                pushToWriteLock({item.second,item.first});
+                ret.emplace_back(EntryItemExt{item.second,value,false});
+                pushToWriteLock({item.second,value});
             }
         }
+        LOG_INFO("666");
         assert(ret.size() == values.size());
         return ret;
     }

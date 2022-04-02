@@ -7,6 +7,7 @@
 #include <type_traits>
 #include "../common/Define.hpp"
 #include "../common/Hash.hpp"
+#include "../common/MathTypes.hpp"
 MRAYNS_BEGIN
 /**
  * @brief Just some information about the volume, no real volume data stored.
@@ -41,6 +42,8 @@ class Volume{
     VoxelType getVoxelType() const {return voxel_type;}
     void getVolumeDim(int&x,int&y,int&z) const { x = volume_dim_x; y = volume_dim_y; z = volume_dim_z;}
     void getVolumeSpace(float&x,float&y,float&z) const { x = volume_space_x; y = volume_space_y; z = volume_space_z;}
+    Vector3f getVolumeSpace() const { return {volume_space_x,volume_space_y,volume_space_z};}
+    Vector3f getVolumeDim() const{ return {volume_dim_x,volume_dim_y,volume_dim_z};}
     int getBlockSize() const { return block_length * block_length * block_length;}
     bool isValid() const { return name != EmptyVolume && voxel_type != UNKNOWN;}//could inspect more like dim and space
     int getMaxLod() const { return max_lod; }

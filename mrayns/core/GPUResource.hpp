@@ -60,6 +60,7 @@ class GPUResource{
     };
 
     struct ResourceDesc{
+        size_t id;
         ResourceType type;
         size_t size;//in bytes
         int width;
@@ -93,7 +94,7 @@ class GPUResource{
      */
     bool uploadResource(ResourceDesc type,PageTable::EntryItem entryItem,ResourceExtent,void* src,size_t size,bool sync);
 
-    void flush();
+    void flush(size_t id);
 
     void downloadResource(ResourceDesc type,PageTable::EntryItem entryItem,ResourceExtent,void* dst,size_t size,bool sync);
 

@@ -9,18 +9,20 @@ MRAYNS_BEGIN
 
 class Image{
   public:
-    Image():w(0),h(0),size(0),d(nullptr){}
-    Image(int w,int h):w(w),h(h),size(w*h){
-        d = static_cast<RGBA*>(::operator new(sizeof(RGBA)*size));
-        for(int i =0;i<size;i++)
+    Image():w(0),h(0),s(0),d(nullptr){
+
+    }
+    Image(int w,int h):w(w),h(h),s(w*h){
+        d = static_cast<RGBA*>(::operator new(sizeof(RGBA)*s));
+        for(int i =0;i<s;i++)
             new(d+i) RGBA(0);
     }
     Image(const Image& other):Image(other.w,other.h){
-        for(int i = 0;i<size;i++)
+        for(int i = 0;i<s;i++)
             d[i] = other.d[i];
     }
-    Image(Image&& other) noexcept:w(other.w),h(other.h),size(other.size),d(other.d){
-        other.destroy();
+    Image(Image&& other) noexcept:w(other.w),h(other.h),s(other.s),d(other.d){
+
     }
     Image& operator=(const Image& other){
         this->destroy();
@@ -51,20 +53,21 @@ class Image{
     bool saveToFile(const std::string& name);
 
     const RGBA* data() const{ return d; }
+    size_t size() const {return height() * pitch();}
     RGBA* data() { return d; }
     int pitch() const { return sizeof(RGBA)*w; }
-    int width() { return w; }
-    int height() { return h; }
+    int width() const { return w; }
+    int height() const { return h; }
     bool isValid() const{ return d;}
     void destroy(){
-        w = h = size = 0;
+        w = h = s = 0;
         if(d){
             ::operator delete(d);
             d = nullptr;
         }
     }
   private:
-    int w,h,size;
+    int w,h,s;
     RGBA* d;
 };
 

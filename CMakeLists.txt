@@ -8,6 +8,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
 include_directories(${PROJECT_SOURCE_DIR}/deps)
 
+#debug
+include(deps/glfw.cmake)
+
 add_subdirectory(mrayns)
 
 add_subdirectory(plugins)

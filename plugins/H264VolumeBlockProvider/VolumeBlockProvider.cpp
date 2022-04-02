@@ -145,7 +145,7 @@ void H264VolumeBlockProvider::getVolumeBlock(void *dst,BlockIndex blockIndex)
     int gpu_index = GPUTaskScheduleHelper::GetOptimalGPUIndex(host_node,GPUTaskScheduleHelper::DefaultGPUTaskCodecEvaluator);
 
     auto task_handle = host_node->recordGPUTask(
-        {HostNode::GPUTask::Codec,1,1,gpu_index}
+        {HostNode::Codec,1,1,gpu_index}
         );
 
     impl->decode(gpu_index,dst,volume.getBlockSize(),packets);
