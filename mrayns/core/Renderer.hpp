@@ -11,7 +11,7 @@
 MRAYNS_BEGIN
 
 struct TransferFunction{
-    using Point = std::pair<float,RGBA>;
+    using Point = std::pair<float,Vector4f>;
     std::vector<Point> points;
 };
 struct TransferFunctionExt1D: public TransferFunction{

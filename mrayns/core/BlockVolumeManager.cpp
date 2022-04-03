@@ -357,7 +357,8 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
             if (locked_mem_desc.isLoaded())
             {
                 auto locked_mem = fetchMemoryBlockFromLocked(lockType,index);
-                assert(locked_mem.isValid());
+//                assert(locked_mem.isValid());
+
                 if(locked_mem.isValid())
                     return locked_mem;
             }
@@ -471,23 +472,36 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
 {
     //1. query from cache if the block data is already cached
     auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex);
-    if(block.isValid()) return block.data;
+    if(block.isValid()){
+        impl->recordPtrForBlockIndex(block.data, blockIndex);
+        return block.data;
+    }
     //2. if not cached, request data from provider
     //2.1 get free memory block buffer
+    auto r = impl->queryMemoryBlockFromLocked(blockIndex);
+    if(r.lock.isWriteLocked()){
+        return nullptr;
+    }
+    block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
+    if(block.isValid()){
+        return nullptr;
+    }
     block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     //2.2 if sync wait for complete or async return immediately
     if(sync){
         provider->getVolumeBlock(block.data,blockIndex);
         bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
         assert(ret);
+        impl->recordPtrForBlockIndex(block.data, blockIndex);
         return block.data;
     }
     else{
         //maybe a thread pool is a nice choice
-        std::thread t([&](){
+        std::thread t([=](){
           provider->getVolumeBlock(block.data,blockIndex);
           bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
           assert(ret);
+          impl->recordPtrForBlockIndex(block.data, blockIndex);
         });
         t.detach();
         return nullptr;
@@ -508,6 +522,7 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 
     START_TIMER
     provider->getVolumeBlock(block.data,blockIndex);
+
     STOP_TIMER("get volume block");
 
     bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex,true);
@@ -521,7 +536,14 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 }
 bool BlockVolumeManager::lock(void *ptr)
 {
-    return false;
+    auto block_index = impl->getBlockIndexWithPtr(ptr);
+    if(block_index.isValid()){
+        int ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::READ_LOCK,block_index,true);
+        return ret == 1;
+    }
+    else{
+        return false;
+    }
 }
 void BlockVolumeManager::waitForLock(void *ptr)
 {

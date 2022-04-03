@@ -41,6 +41,7 @@ struct VolumeRendererMPIDesc{
 };
 struct VolumeRendererCamera: public Camera{
     float raycasting_step;
+    float raycasting_max_dist;
     VolumeRendererLodDist lod_dist;
     VolumeRendererMPIDesc mpi_desc;
 };

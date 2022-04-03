@@ -54,8 +54,12 @@ struct GPUResource::Impl{
     VkInstance vk_instance;//this is a pointer and should be get from global unique vulkan instance
     struct StagingBuffer{
         VkBuffer buffer;
+#ifdef DEBUG_WINDOW
+        VkDeviceMemory mem;
+#else
         VmaAllocation allocation;
         VmaAllocationInfo allocInfo;
+#endif
     };
     //https://stackoverflow.com/questions/31112852/how-stdunordered-map-is-implemented
     //unordered_map is thread-safe even each thread write different key for value
@@ -311,7 +315,7 @@ struct GPUResource::Impl{
 #ifdef DEBUG_WINDOW
         internal::createImage(node_vulkan_res->physicalDevice,node_vulkan_res->device,width,height,1,VK_SAMPLE_COUNT_1_BIT,
                               VK_FORMAT_R8_UNORM,VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,texture.image,texture.mem,VK_IMAGE_TYPE_3D);
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,texture.image,texture.mem,VK_IMAGE_TYPE_3D,depth);
 #else
         auto res = vmaCreateImage(node_vulkan_res->allocator,&imageCreateInfo,&allocInfo,&texture.image,&texture.allocation,nullptr);
         if(res !=VK_SUCCESS){
@@ -339,6 +343,8 @@ struct GPUResource::Impl{
 
         //纹理的layout使用了 VK_IMAGE_LAYOUT_GENERAL
         //因为纹理的更新和读操作可能会同时进行 即在对纹理部分区域进行更新时 渲染器可能在读纹理用于渲染
+        //todo
+        //but!!! VK_IMAGE_LAYOUT_GENERAL 并不适合采样 所以 还是要设置为VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL 但是每次上传数据的时候重新更换layout??? 会不会多线程冲突
 
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -430,7 +436,14 @@ struct GPUResource::Impl{
         allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT  |
                           VMA_ALLOCATION_CREATE_MAPPED_BIT;
         START_TIMER
+#ifdef DEBUG_WINDOW
+        internal::createBuffer(node_vulkan_res->physicalDevice,node_vulkan_res->device,bufferCreateInfo.size,
+                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                               stagingBuffer.buffer,stagingBuffer.mem);
+        auto res = VK_SUCCESS;
+#else
         auto res = vmaCreateBuffer(node_vulkan_res->allocator,&bufferCreateInfo,&allocInfo,&stagingBuffer.buffer,&stagingBuffer.allocation,&stagingBuffer.allocInfo);
+#endif
         STOP_TIMER("create staging buffer cost")
         if(res == VK_SUCCESS){
             LOG_INFO("create staging buffer for size({}) successfully",size);
@@ -444,7 +457,11 @@ struct GPUResource::Impl{
     }
     //internal
     void destroyStagingBuffer(StagingBuffer& stagingBuffer){
+#ifdef DEBUG_WINDOW
+
+#else
         vmaDestroyBuffer(node_vulkan_res->allocator,stagingBuffer.buffer,stagingBuffer.allocation);
+#endif
     }
 
     //no need for threadID and it will immediately upload data from cpu to gpu
@@ -514,6 +531,7 @@ struct GPUResource::Impl{
         region.imageSubresource.baseArrayLayer = 0;
         region.imageSubresource.layerCount = 1;
 
+
         vkCmdCopyBufferToImage(asyncTransferCommand,stagingBuffer.buffer,tex.image,VK_IMAGE_LAYOUT_GENERAL,1,&region);
 
         VK_EXPR(vkEndCommandBuffer(asyncTransferCommand));
@@ -526,9 +544,18 @@ struct GPUResource::Impl{
 //        void* p;
 //        VK_EXPR(vmaMapMemory(node_vulkan_res->allocator,stagingBuffer.allocation,&p));
         START_TIMER
+#ifdef DEBUG_WINDOW
+        void* p;
+        VK_EXPR(vkMapMemory(node_vulkan_res->device,stagingBuffer.mem,0,size,0,&p));
+        memcpy(p,data,size);
+#else
         memcpy(stagingBuffer.allocInfo.pMappedData,data,size);//copy to host mem need time more than normal cpu memcpy
+#endif
         STOP_TIMER("copy to staging buffer")
 //        vmaUnmapMemory(node_vulkan_res->allocator,stagingBuffer.allocation);
+#ifdef DEBUG_WINDOW
+        vkUnmapMemory(node_vulkan_res->device,stagingBuffer.mem);
+#endif
     }
     void flushStagingBufferAndRelease(size_t threadID){
         START_TIMER
@@ -656,11 +683,10 @@ std::vector<GPUResource::ResourceDesc> GPUResource::getGPUResourceDesc()
 bool GPUResource::uploadResource(
     GPUResource::ResourceDesc desc, PageTable::EntryItem entryItem, ResourceExtent extent,void *src, size_t size,bool sync)
 {
-    return false;
     if(desc.type!=Texture) return false;
 
-    auto thread_id = desc.id;
-    LOG_INFO("GPUResource::uploadResource called thread id: {}",std::hash<decltype(thread_id)>()(thread_id));
+    auto tid = desc.id;
+    LOG_INFO("GPUResource::uploadResource called thread id: {}",tid);
 
     auto extent_size = size_t(extent.width) * extent.height * extent.depth;
     assert(extent_size == size);
@@ -674,8 +700,7 @@ bool GPUResource::uploadResource(
     }
     else{
         return impl->updateTextureSubImage3DAsync(
-            thread_id,
-                texID,srcX,srcY,srcZ,extent.width,extent.height,extent.depth,src);
+            tid,texID,srcX,srcY,srcZ,extent.width,extent.height,extent.depth,src);
     }
 }
 

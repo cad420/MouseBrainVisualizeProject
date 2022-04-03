@@ -167,15 +167,17 @@ struct VulkanVolumeRenderer::Impl{
     Vector4f view_pos;
     static constexpr int MaxVolumeLod = 12;
     struct VolumeInfo{
-        Vector4i volume_dim;//x y z max_lod
-        Vector3i lod0_block_dim;
-        int block_length;
-        int padding;
-        Vector3f volume_space;
-        Vector3f inv_volume_space;
+        Vector4ui volume_dim;//x y z max_lod
+        Vector3ui lod0_block_dim;uint32_t padding0 = 1;
+        Vector3f volume_space;uint32_t padding1 = 2;
+        Vector3f inv_volume_space;uint32_t padding2 = 3;
+        Vector3f virtual_block_length_space;
+        uint32_t virtual_block_length;
+        uint32_t padding;
+        uint32_t padding_block_length;
         float voxel;
-        uint32_t lod_page_table_offset[MaxVolumeLod];
-        Vector3f inv_texture_shape[GPUResource::DefaultMaxGPUTextureCount];
+        uint32_t padding3 = 4;
+        Vector4f inv_texture_shape[GPUResource::DefaultMaxGPUTextureCount] = {Vector4f{0.f}};
     } volume_info;
     void* result_color_mapped_ptr = nullptr;
     /**
@@ -224,17 +226,18 @@ struct VulkanVolumeRenderer::Impl{
 
         void clear(){
             for(int i = 0;i < HashTableSize; i++){
-                hash_table[i].first.w = -1;
+                hash_table[i].first = {-1,-1,-1,-1};
             }
         }
 
     }page_table;
 
     struct RenderInfo{
-        float lod_dist[MaxVolumeLod+1];
+        Vector3f view_pos;
         float ray_dist;
         float ray_step;
-        Vector3f view_pos;
+        uint32_t padding0[3]={1,2,3};
+        Vector4f lod_dist[MaxVolumeLod];
     } render_info;
     struct ProxyCube{
         Vertex vertices[8] = {};//set by volume
@@ -412,7 +415,13 @@ struct VulkanVolumeRenderer::Impl{
         matrix_transform.mvp = proj * view * matrix_transform.model;
         uploadRayPosUBO();
 
-
+        render_info.ray_step = camera.raycasting_step;
+        render_info.ray_dist = camera.raycasting_max_dist;
+        render_info.view_pos = camera.position;
+        for(int i = 0; i < camera.lod_dist.MaxLod;i++){
+            render_info.lod_dist[i] = Vector4f(camera.lod_dist.lod_dist[i]);
+        }
+        uploadRenderParamsUBO();
     }
     void uploadRayPosUBO(){
         //ray pos
@@ -490,24 +499,36 @@ struct VulkanVolumeRenderer::Impl{
 //        createRendererVKResPageTableBuffer();
     }
     void setTransferFunction1D(float* data,int dim = 256,int length = 1024){
-        return;//todo
         assert(dim == 256 && length == 1024);
         //create staging buffer
         VkBuffer stagingBuffer;
         VmaAllocation allocation;
+        VkDeviceMemory mem;
         VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         bufferInfo.size = sizeof(float)*length;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         VmaAllocationCreateInfo allocationInfo{};
         allocationInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+#ifdef DEBUG_WINDOW
+        internal::createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferInfo.size,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                               stagingBuffer,mem);
+#else
         VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocationInfo,&stagingBuffer,&allocation,nullptr));
+#endif
         //copy src buffer to staging buffer
         void* p;
+#ifdef DEBUG_WINDOW
+        vkMapMemory(node_vk_res->device,mem,0,bufferInfo.size,0,&p);
+#else
         VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,allocation,&p));
+#endif
         memcpy(p,data,sizeof(float)*length);
+#ifdef DEBUG_WINDOW
+        vkUnmapMemory(node_vk_res->device,mem);
+#else
         vmaUnmapMemory(renderer_vk_res->allocator,allocation);
-
+#endif
         //copy staging buffer to device
         VkCommandBuffer commandBuffer = beginSingleTimeCommand();
 
@@ -528,7 +549,12 @@ struct VulkanVolumeRenderer::Impl{
         //finally transition image layout
         transitionImageLayout(renderer_vk_res->tf.image,VK_FORMAT_R32G32B32A32_SFLOAT,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+#ifdef DEBUG_WINDOW
+
+#else
         vmaDestroyBuffer(renderer_vk_res->allocator,stagingBuffer,allocation);
+#endif
+        LOG_INFO("successfully upload transfer function");
     }
 
     void updateProxyCube(){
@@ -632,27 +658,22 @@ struct VulkanVolumeRenderer::Impl{
     }
     void updateVolumeInfo(){
         assert(volume.isValid());
-        volume.getVolumeDim(volume_info.volume_dim.x, volume_info.volume_dim.y, volume_info.volume_dim.z);
+        volume.getVolumeDim(reinterpret_cast<int &>(volume_info.volume_dim.x),
+                            reinterpret_cast<int &>(volume_info.volume_dim.y),
+                            reinterpret_cast<int &>(volume_info.volume_dim.z));
         volume_info.volume_dim.w = volume.getMaxLod();
-        volume_info.block_length = volume.getBlockLength();
+        volume_info.padding_block_length = volume.getBlockLength();
         volume_info.padding = volume.getBlockPadding();
-        auto len = volume.getBlockLengthWithoutPadding();
-        volume_info.lod0_block_dim = (volume_info.volume_dim + len - 1) / len;
+
+        volume_info.virtual_block_length = volume_info.padding_block_length - volume_info.padding * 2;
+
+        volume_info.lod0_block_dim = (volume_info.volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
         volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
         volume_info.inv_volume_space = 1.f / volume_info.volume_space;
+        volume_info.virtual_block_length_space = (float)volume_info.virtual_block_length * volume_info.volume_space;
+
         volume_info.voxel = std::min({volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z});
-        volume_info.lod_page_table_offset[0] = 0;
-        auto lod_dim = volume_info.lod0_block_dim;
-        int block_count = 0;
-        for(int i = 1;i<= volume_info.volume_dim.w+1;i++){
-            uint32_t count = lod_dim.x * lod_dim.y * lod_dim.z;
-            block_count += count;
-            volume_info.lod_page_table_offset[i] = volume_info.lod_page_table_offset[i-1] + count;
-            lod_dim = (lod_dim + 1) / 2;
-        }
-        //update page table for the volume
-//        page_table.block_count = block_count;
-//        page_table.mapping_table.resize(block_count*4);
+
         //upload
         uploadVolumeInfoUBO();
     }
@@ -698,11 +719,11 @@ struct VulkanVolumeRenderer::Impl{
     void uploadPageTable(){
         void* data;
 #ifdef DEBUG_WINDOW
-        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->pageTableUBO.mem,0,HashTableSize,0,&data);
+        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->pageTableUBO.mem,0,sizeof(HashTable),0,&data);
 #else
                 VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->pageTableUBO.allocation,&data));
 #endif
-        memcpy(data,&page_table,HashTableSize);
+        memcpy(data,&page_table,sizeof(HashTable));
 #ifdef DEBUG_WINDOW
         vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->pageTableUBO.mem);
 #else
@@ -811,7 +832,7 @@ struct VulkanVolumeRenderer::Impl{
             const auto& texes = node_vk_res->textures;
             for(int i = 0;i<texes.size();i++){
                 volume_info.inv_texture_shape[i] = {1.f/texes[i].extent.width,
-                1.f/texes[i].extent.height,1.f/texes[i].extent.depth};
+                1.f/texes[i].extent.height,1.f/texes[i].extent.depth,i};
             }
         }
 
@@ -904,9 +925,9 @@ struct VulkanVolumeRenderer::Impl{
             createImage(node_vk_res->physicalDevice,render_vk_shared_res->shared_device,
                         256,1,1,VK_SAMPLE_COUNT_1_BIT,VK_FORMAT_R32G32B32A32_SFLOAT,VK_IMAGE_TILING_OPTIMAL,
                         VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        renderer_vk_res->tf.image,renderer_vk_res->tf.mem);
+                        renderer_vk_res->tf.image,renderer_vk_res->tf.mem,VK_IMAGE_TYPE_1D);
             createImageView(render_vk_shared_res->shared_device,renderer_vk_res->tf.image,VK_FORMAT_R32G32B32A32_SFLOAT,
-                            VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->tf.view);
+                            VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->tf.view,VK_IMAGE_VIEW_TYPE_1D);
 
             VkSamplerCreateInfo samplerInfo{};
             samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1057,9 +1078,10 @@ struct VulkanVolumeRenderer::Impl{
                 tfImageInfo.imageView = renderer_vk_res->tf.view;
                 tfImageInfo.sampler = renderer_vk_res->tf.sampler;
 
-                std::vector<VkDescriptorImageInfo> volumeImageInfo(node_vk_res->textures.size());
+                auto count = node_vk_res->textures.size();
+                std::vector<VkDescriptorImageInfo> volumeImageInfo(count);
                 for(int i = 0;i<volumeImageInfo.size();i++){
-                    volumeImageInfo[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                    volumeImageInfo[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                     volumeImageInfo[i].imageView = node_vk_res->textures[i].view;
                     volumeImageInfo[i].sampler = node_vk_res->texture_sampler;
                 }

@@ -10,6 +10,8 @@
 #include "common/Parrallel.hpp"
 #include <SDL.h>
 #include "algorithm/GeometryHelper.hpp"
+#include "algorithm/ColorMapping.hpp"
+#include "algorithm/RenderHelper.hpp"
 using namespace mrayns;
 
 struct WindowContext{
@@ -80,7 +82,7 @@ void Run(){
     desc.depth = 1024;
     desc.pitch = 1024;
     desc.block_length = volume.getBlockLength();
-    for(int i = 0;i < 8; i++)
+    for(int i = 0;i < 10; i++)
         gpu_resource.createGPUResource(desc);
 
     auto volume_renderer = RendererCaster<Renderer::VOLUME>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
@@ -95,42 +97,56 @@ void Run(){
     }
 
     CameraExt camera{};
-    camera.position = {5.92f,5.92f,7.9f};
-    camera.target = {5.92f,5.92f,7.f};
+    camera.position = {5.52f,5.52f,7.9f};
+    camera.target = {5.52f,5.52f,7.f};
     camera.front = {0.f,0.f,-1.f};
     camera.up = {0.f,1.f,0.f};
     camera.near_z = 0.001f;
-    camera.far_z = 1.f;
+    camera.far_z = 6.f;
     camera.width = frame_w;
     camera.height = frame_h;
     camera.aspect = static_cast<float>(frame_w) / static_cast<float>(frame_h);
     camera.yaw = -90.f;
     camera.pitch = 0.f;
+    camera.fov = 40.f;
+
+    TransferFunctionExt1D transferFunctionExt1D{};
+    transferFunctionExt1D.points.emplace_back(0.25f,Vector4f{1.f,0.f,0.f,0.f});
+    transferFunctionExt1D.points.emplace_back(0.6f,Vector4f{0.f,1.f,0.f,1.f});
+    ComputeTransferFunction1DExt(transferFunctionExt1D);
+    volume_renderer->setTransferFunction(transferFunctionExt1D);
 
 
     int total_missed_count = 0;
+
+
+
 
     auto volume_render = [&]()->const Image&{
 
 
       START_TIMER
         VolumeRendererCamera renderer_camera{camera};
+        renderer_camera.raycasting_step = 0.00016f;
+        renderer_camera.raycasting_max_dist = camera.far_z;
+        LOG_INFO("render camera position: {} {} {}",camera.position.x,camera.position.y,camera.position.z);
+
       //1. get current camera view and projection matrix
       auto view_matrix = GeometryHelper::ExtractViewMatrixFromCamera(renderer_camera);
       auto proj_matrix = GeometryHelper::ExtractProjMatrixFromCamera(renderer_camera);
       auto vp = proj_matrix * view_matrix;
       FrustumExt view_frustum{};
       GeometryHelper::ExtractViewFrustumPlanesFromMatrix(vp,view_frustum);
-
+      RenderHelper::GetDefaultLodDist(volume,renderer_camera.lod_dist.lod_dist,volume.getMaxLod());
 
       //2. compute intersect blocks with current camera view frustum
       //需要得到不同lod的相交块
       auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum,renderer_camera.lod_dist,renderer_camera.position);
       int intersect_block_count = intersect_blocks.size();
       LOG_INFO("volume render intersect block count: {}",intersect_block_count);
-//      for(auto& b:intersect_blocks){
-//          LOG_INFO("intersect block {} {} {} {}",b.x,b.y,b.z,b.w);
-//      }
+      for(auto& b:intersect_blocks){
+          LOG_INFO("intersect block {} {} {} {}",b.x,b.y,b.z,b.w);
+      }
       //3.1 assign task to different GPUResource
       //todo 在这里可以根据GPUNode的数量分割渲染任务 交给不同的GPU
       //分割并不是更高效利用GPU 而是用更多的GPU资源提升绘制速度 所以应该只在总的负载很小时开启
@@ -152,10 +168,26 @@ void Run(){
           }
       }
       LOG_INFO("first time missed blocks count {}",missed_blocks.size());
+
+      //异步加载数据块 先查询缺失块是否已经加载好
+      std::unordered_map<Volume::BlockIndex,void*> missed_block_buffer;
+      std::vector<Volume::BlockIndex> copy_missed_blocks;
+      copy_missed_blocks.swap(missed_blocks);
+      for(auto& block:copy_missed_blocks){
+          auto p = block_volume_manager.getVolumeBlock(block,false);
+          missed_block_buffer[block] = p;
+          if(p){
+              block_volume_manager.lock(p);
+              missed_blocks.emplace_back(block);
+          }
+      }
+
       //此时获取保证其之后不会被上传写入 一定需要此处上传
       auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);//不一定等同于missed_blocks
       page_table.acquireRelease();
       LOG_INFO("PageTable acquire release");
+
+
       std::unordered_map<Volume::BlockIndex,PageTable::EntryItem> block_entries;//真正需要上传的数据块
       std::mutex block_entries_mtx;
       missed_blocks.clear();//重新生成
@@ -174,9 +206,15 @@ void Run(){
       auto thread_id = std::this_thread::get_id();
       auto tid = std::hash<decltype(thread_id)>()(thread_id);
       auto task = [&](int thread_idx,Volume::BlockIndex block_index){
-          //单机单线程模式下需要换一种写法
-          auto p = block_volume_manager.getVolumeBlockAndLock(block_index);
+
+
           std::lock_guard<std::mutex> lk(block_entries_mtx);
+        //单机单线程模式
+            auto p = missed_block_buffer[block_index];
+            if(!p) return;
+        //多线程模式
+//          auto p = block_volume_manager.getVolumeBlockAndLock(block_index);
+
           auto entry = block_entries[block_index];
           GPUResource::ResourceDesc desc;
           desc.id = tid;
@@ -191,8 +229,9 @@ void Run(){
               volume.getBlockLength(),
               volume.getBlockLength()
           };
-          gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),false);
-          auto ret = block_volume_manager.unlock(p);
+          auto ret = gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),true);
+          assert(ret);
+          ret = block_volume_manager.unlock(p);
           assert(ret);
       };
       //4.1 get volume block and upload to GPUResource
@@ -254,9 +293,23 @@ void Run(){
               break;
           }
           case SDL_KEYDOWN:{
-
-
-
+              switch (event.key.keysym.sym){
+              case SDLK_ESCAPE:{
+                  exit = true;
+                  LOG_ERROR("exit camera position: {} {} {}",camera.position.x,camera.position.y,camera.position.z);
+                  break;
+              }
+              case SDLK_w:{
+                  camera.position += camera.front * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_s:{
+                  camera.position -= camera.front * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              }
               break;
           }
 
@@ -303,6 +356,7 @@ void Run(){
       SDL_UpdateTexture(wc->frame, nullptr,pixels.data(),pixels.pitch());
       SDL_RenderClear(wc->renderer);
       SDL_RenderCopy(wc->renderer,wc->frame, nullptr,&rect);
+      SDL_RenderCopyEx(wc->renderer,wc->frame,nullptr,&rect,0.0,nullptr,SDL_FLIP_VERTICAL);
       SDL_RenderPresent(wc->renderer);
     };
     while(!exit){

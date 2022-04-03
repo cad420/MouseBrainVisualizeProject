@@ -139,9 +139,10 @@ uint32_t getMemoryTypeIndex(VkPhysicalDevice physicalDevice,uint32_t typeBits, V
 void createImage(VkPhysicalDevice physicalDevice,VkDevice device,uint32_t width,uint32_t height,uint32_t mipLevels,
                  VkSampleCountFlagBits numSamples,VkFormat format,
                  VkImageTiling tiling,VkImageUsageFlags usage,VkMemoryPropertyFlags properties,
-                 VkImage& image,VkDeviceMemory& imageMemory,VkImageType type = VK_IMAGE_TYPE_2D);
+                 VkImage& image,VkDeviceMemory& imageMemory,VkImageType type = VK_IMAGE_TYPE_2D,uint32_t depth = 1);
 
-void createImageView(VkDevice device,VkImage image,VkFormat format,VkImageAspectFlags aspectFlags,uint32_t mipLevels,VkImageView& imageView);
+void createImageView(VkDevice device,VkImage image,VkFormat format,VkImageAspectFlags aspectFlags,uint32_t mipLevels,VkImageView& imageView,
+                     VkImageViewType type = VK_IMAGE_VIEW_TYPE_2D);
 
 void createBuffer(VkPhysicalDevice physicalDevice,VkDevice device,
                   VkDeviceSize size,VkBufferUsageFlags usage,VkMemoryPropertyFlags properties,

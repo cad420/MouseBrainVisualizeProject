@@ -43,6 +43,7 @@ struct H264VolumeBlockProvider::Impl{
             volume.volume_space_y = space[1];
             volume.volume_space_z = space[2];
             volume.voxel_type = Volume::UINT8;
+            volume.max_lod = max_lod;
             assert(volume.isValid());
 
         }
