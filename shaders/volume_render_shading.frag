@@ -102,18 +102,49 @@ int VirtualSample(in int sampleLod,in vec3 samplePos,out float sampleScalar){
     vec3 offset_in_virtual_block = (samplePos * volumeInfoUBO.inv_volume_space - block_index * volumeInfoUBO.virtual_block_length * sampleLodT) / sampleLodT;
     vec3 texture_sample_coord = (texture_entry.xyz * volumeInfoUBO.padding_block_length + offset_in_virtual_block + vec3(volumeInfoUBO.padding)) * volumeInfoUBO.inv_texture_shape[texture_entry.w];
 
-
-
     sampleScalar = texture(CachedVolume[texture_entry.w],texture_sample_coord).r;
-
-    if(false){
-        oFragColor = vec4(texture_sample_coord,sampleScalar);
-        return 2;
-    }
 
     return 1;
 }
+vec2 IntersectWithAABB(in vec3 minP,in vec3 maxP,in vec3 rayPos,in vec3 invRayDirection){
 
+    float t_min_x = (minP.x - rayPos.x) * invRayDirection.x;
+    float t_max_x = (maxP.x - rayPos.x) * invRayDirection.x;
+    if(invRayDirection.x < 0.f){
+        float t = t_min_x;
+        t_min_x = t_max_x;
+        t_max_x = t;
+    }
+
+    float t_min_y = (minP.y - rayPos.y) * invRayDirection.y;
+    float t_max_y = (maxP.y - rayPos.y) * invRayDirection.y;
+    if(invRayDirection.y < 0.f){
+        float t = t_min_y;
+        t_min_y = t_max_y;
+        t_max_y = t;
+    }
+
+    float t_min_z = (minP.z - rayPos.z) * invRayDirection.z;
+    float t_max_z = (maxP.z - rayPos.z) * invRayDirection.z;
+    if(invRayDirection.z < 0.f){
+        float t = t_min_z;
+        t_min_z = t_max_z;
+        t_max_z = t;
+    }
+
+    float enter_t = max(t_min_x,max(t_min_y,t_min_z));
+    float exit_t  = min(t_max_x,min(t_max_y,t_max_z));
+    return vec2(enter_t,exit_t);
+}
+vec3 GetRayExitPos(in vec3 rayDirection,in vec3 rayPos,in int sampleLod){
+    int sampleLodT = 1 << sampleLod;
+    vec3 block_index = vec3(ivec3(rayPos / (volumeInfoUBO.virtual_block_length_space * sampleLodT)));
+    vec3 box_min_pos = block_index * volumeInfoUBO.virtual_block_length_space;
+    vec3 box_max_pos = (block_index + vec3(1.f)) * volumeInfoUBO.virtual_block_length_space * sampleLodT;
+    vec2 t = IntersectWithAABB(box_min_pos,box_max_pos,rayPos,1.f/rayDirection);
+    vec3 skip_pos = rayPos + rayDirection * t.y;
+    return skip_pos;
+}
 void main() {
     vec3 ray_entry_pos = subpassLoad(RayEntry).xyz;
     vec3 ray_exit_pos = subpassLoad(RayExit).xyz;
@@ -149,8 +180,14 @@ void main() {
         int ret = VirtualSample(cur_sample_lod,ray_cast_pos,sample_scalar);
 
         if(ret == 0){ // 该块没找到 可以进行跳过
-//            accumelate_color = vec4(1.f,1.f,1.f,1.f);
-//            break;
+            //accumelate_color = vec4(1.f,1.f,1.f,1.f);
+            //break;
+            vec3 ray_skip_pos = GetRayExitPos(ray_direction,ray_cast_pos,cur_sample_lod);
+            float skip_pos_dist = dot(ray_skip_pos-ray_cast_pos,ray_direction);
+            float max_skip_dist = min(renderParams.lod_dist[cur_sample_lod] - ray_cast_dist, skip_pos_dist);
+            ray_cast_pos += ray_direction * max_skip_dist;
+
+            //continue;
         }
         else if(ret == 2){
 
