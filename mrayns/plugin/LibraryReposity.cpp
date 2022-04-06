@@ -52,7 +52,7 @@ void LibraryReposity::AddLibrary(const std::string &path)
     std::string full_name ;
     std::string::size_type pos1 = path.find_last_of('/');
     std::string::size_type pos2 = path.find_last_of('\\');
-    auto pos = std::max(pos1,pos2);
+    auto pos = std::max(pos1,pos2) + 1;
     if(pos == std::string::npos){
         throw std::runtime_error("AddLibrary: Invalid path "+path);
     }

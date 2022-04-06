@@ -122,6 +122,8 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
      * 后者的指针是稳定可靠的 里面的数据不会被更改
      */
      std::condition_variable cv;
+     std::condition_variable loading_cv;
+     std::mutex loading_mtx;
      std::mutex wait_mtx;
     std::priority_queue<MemoryBlockDesc,std::vector<MemoryBlockDesc>,Pr> free_mem_blocks;
 //    std::list<MemoryBlockDesc> free_mem_blocks;
@@ -315,9 +317,18 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         //notify wait for free memory block add
         cv.notify_one();
     }
+    //public wait block appending
+    void waitForBlockLoading(const BlockIndex& index){
+
+        std::unique_lock<std::mutex> lk(loading_mtx);
+        loading_cv.wait(lk,[this,index](){
+            return queryMemoryBlockFromLocked(index).isLoaded();
+        });
+    }
     //internal
     void appendMemoryBlockToLocked(const MemoryBlockDesc& desc){
         locked_mem_blocks.push_back(desc);
+        loading_cv.notify_all();
     }
     //internal
     MemoryBlockDesc queryMemoryBlockFromFree(BlockIndex index){
@@ -478,10 +489,13 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
     }
     //2. if not cached, request data from provider
     //2.1 get free memory block buffer
-    auto r = impl->queryMemoryBlockFromLocked(blockIndex);
-    if(r.lock.isWriteLocked()){
+
+    block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
+    if(block.isValid()){
         return nullptr;
     }
+
+
     block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     if(block.isValid()){
         return nullptr;
@@ -507,6 +521,7 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
         return nullptr;
     }
 }
+//该函数是同步的 会等待数据块加载完毕 因此对于writelock的数据块 它应该被知道 并且等待writelock的数据块加载完
 void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 {
     //todo 会导致存储两个相同的Block
@@ -516,6 +531,15 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
         impl->recordPtrForBlockIndex(block.data, blockIndex);
         return block.data;
     }
+    //如果该块正在被写入 那么等待其完成
+    block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
+    if(block.isValid()){
+        //基于刚加载进来的块 必定处于ReadLock
+        impl->waitForBlockLoading(blockIndex);
+        return getVolumeBlockAndLock(blockIndex);
+    }
+
+
     //2. if not cached, request data from provider
     block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     //3. if sync wait for complete or async return immediately
