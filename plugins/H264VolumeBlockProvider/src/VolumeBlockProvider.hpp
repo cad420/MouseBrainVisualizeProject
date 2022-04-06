@@ -3,11 +3,11 @@
 //
 #pragma once
 
-#include "plugin/Plugin.hpp"
-#include "extension/VolumeBlockProviderInterface.hpp"
-#include <unordered_map>
-#include "VoxelCompression/voxel_uncompress/VoxelUncompress.h"
 #include "VoxelCompression/voxel_compress/VoxelCmpDS.h"
+#include "VoxelCompression/voxel_uncompress/VoxelUncompress.h"
+#include "extension/VolumeBlockProviderInterface.hpp"
+#include "plugin/Plugin.hpp"
+#include <unordered_map>
 using namespace sv;
 MRAYNS_BEGIN
 
