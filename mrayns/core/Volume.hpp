@@ -62,6 +62,7 @@ class Volume{
     int volume_dim_x{0},volume_dim_y{0},volume_dim_z{0};
     float volume_space_x{0.f},volume_space_y{0.f},volume_space_z{0.f};
     int max_lod{0};
+    void* data = nullptr;
 };
 
 

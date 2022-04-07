@@ -10,8 +10,11 @@
 #include <array>
 #include "../../Config.hpp"
 #include "../../algorithm/GeometryHelper.hpp"
+#include "Common.hpp"
+#ifdef DEBUG_WINDOW
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#endif
 MRAYNS_BEGIN
 
 namespace internal{
@@ -184,53 +187,8 @@ struct VulkanVolumeRenderer::Impl{
      * everytime after setting new volume should re-create it
      * everytime setting page table should memset zero first
      */
-     static constexpr int HashTableSize = 1024; // the same in the shader
-
-     //max uniform buffer size 64kb
-     using HashTableItem = std::pair<PageTable::ValueItem,PageTable::EntryItem>;
-     using HashTableKey = HashTableItem::first_type;
-     static constexpr int HashTableItemSize = sizeof(HashTableItem);
-     struct HashTable{
-        HashTableItem hash_table[HashTableSize];
-        uint32_t hash(const HashTableKey& key){
-            static_assert(sizeof(HashTableKey)==sizeof(int)*4,"" );
-            uint32_t* v =(uint32_t*)(&key);
-            uint32_t value = v[0];
-            for(int i = 1; i < 4; i++){
-                value = value ^ (v[i] + 0x9e3779b9 + (value << 6) + (value >> 2));
-            }
-            return value;
-        }
-        void append(const HashTableItem& item){
-            //glsl not support 64bit
-//            size_t hash_v = std::hash<HashTableKey>()(item.first);
-            uint32_t hash_v = hash(item.first);
-            int pos = hash_v % HashTableSize;
-            int i = 0;
-            bool positive = false;
-            while(true){
-                int ii = i*i;
-                pos += positive ? ii : -ii;
-                pos %= HashTableSize;
-                if(!hash_table[pos].first.isValid()){
-                    hash_table[pos] = item;
-                    return;
-                }
-                if(!positive) i++;
-                positive = !positive;
-                if(i > HashTableSize){
-                    throw std::runtime_error("hash table can't find empty packet");
-                }
-            }
-        }
-
-        void clear(){
-            for(int i = 0;i < HashTableSize; i++){
-                hash_table[i].first = {-1,-1,-1,-1};
-            }
-        }
-
-    }page_table;
+    using HashTable = ::mrayns::internal::MappingTable::HashTable;
+    HashTable page_table;
 
     struct RenderInfo{
         Vector3f view_pos;
@@ -723,7 +681,7 @@ struct VulkanVolumeRenderer::Impl{
 #else
                 VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->pageTableUBO.allocation,&data));
 #endif
-        memcpy(data,&page_table,sizeof(HashTable));
+        memcpy(data,&page_table,sizeof(page_table));
 #ifdef DEBUG_WINDOW
         vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->pageTableUBO.mem);
 #else
@@ -1003,7 +961,7 @@ struct VulkanVolumeRenderer::Impl{
 #else
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->renderInfoUBO.buffer,&renderer_vk_res->renderInfoUBO.allocation,nullptr));
 #endif
-            bufferInfo.size = sizeof(HashTable);
+            bufferInfo.size = sizeof(page_table);
 #ifdef DEBUG_WINDOW
             internal::createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferInfo.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,renderer_vk_res->pageTableUBO.buffer,renderer_vk_res->pageTableUBO.mem);
@@ -1094,7 +1052,7 @@ struct VulkanVolumeRenderer::Impl{
                 VkDescriptorBufferInfo pageTableBufferInfo{};
                 pageTableBufferInfo.buffer = renderer_vk_res->pageTableUBO.buffer;
                 pageTableBufferInfo.offset = 0;
-                pageTableBufferInfo.range = sizeof(HashTable);
+                pageTableBufferInfo.range = sizeof(page_table);
 
                 VkDescriptorBufferInfo renderBufferInfo{};
                 renderBufferInfo.buffer = renderer_vk_res->renderInfoUBO.buffer;
@@ -1186,10 +1144,7 @@ struct VulkanVolumeRenderer::Impl{
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->proxyCubeBuffer.indexBuffer,&renderer_vk_res->proxyCubeBuffer.indexAllocation,nullptr));
 #endif
         }
-        //create page table storage buffer
-        {
 
-        }
         //create draw command buffer and record
         {
             std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
