@@ -51,10 +51,10 @@ bool InitWindowContext(int w,int h){
 }
 
 void Run(){
-    PluginLoader::LoadPlugins("./plugins");
+    PluginLoader::LoadPlugins("C:/Users/wyz/projects/MouseBrainVisualizeProject/bin");
     auto p = std::unique_ptr<IVolumeBlockProviderInterface>(
         PluginLoader::CreatePlugin<IVolumeBlockProviderInterface>("block-provider"));
-    std::string h264_file_path="E:/MouseNeuronData/mouse_file_config.json";
+    std::string h264_file_path="E:/MouseNeuronData/mouse_file_config0.json";
     p->open(h264_file_path);
     assert(p.get());
 
@@ -174,7 +174,9 @@ void Run(){
       std::vector<Volume::BlockIndex> copy_missed_blocks;
       copy_missed_blocks.swap(missed_blocks);
       for(auto& block:copy_missed_blocks){
+          START_TIMER
           auto p = block_volume_manager.getVolumeBlock(block,false);
+          STOP_TIMER("get volume block")
           missed_block_buffer[block] = p;
           if(p){
               block_volume_manager.lock(p);
@@ -232,6 +234,7 @@ void Run(){
           auto ret = gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),true);
           assert(ret);
           ret = block_volume_manager.unlock(p);
+          missed_block_buffer[block_index] = nullptr;
           assert(ret);
       };
       //4.1 get volume block and upload to GPUResource
@@ -239,6 +242,12 @@ void Run(){
 
       gpu_resource.flush(tid);
       //4.2 release write to read lock
+
+      for(const auto& item:missed_block_buffer){
+          if(item.second)
+              block_volume_manager.unlock(item.second);
+      }
+
       for(const auto& block:missed_blocks){
           page_table.update(block);
       }

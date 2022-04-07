@@ -398,7 +398,8 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
                 }
                 if(mem.lock.isWriteLocked()){
                     //mem locked by WRITE_LOCK can't add a new lock read or write
-
+                    mem.t = GetCurrentT();
+                    return mem.memory_block;
                 }
                 else if(mem.lock.isReadLocked() && lockType==Lock::READ_LOCK){
                     //mem locked by READ_LOCK only can add a new read lock but can't add a write lock
@@ -482,31 +483,35 @@ const Volume &BlockVolumeManager::getVolume() const
 void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync)
 {
     //1. query from cache if the block data is already cached
+    LOG_INFO("1");
     auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex);
+    if(block.isValid()){
+        impl->recordPtrForBlockIndex(block.data, blockIndex);
+        return block.data;
+    }
+
+    block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::NONE,blockIndex);
     if(block.isValid()){
         impl->recordPtrForBlockIndex(block.data, blockIndex);
         return block.data;
     }
     //2. if not cached, request data from provider
     //2.1 get free memory block buffer
-
+    LOG_INFO("2");
     block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     if(block.isValid()){
         return nullptr;
     }
-
-
-    block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
-    if(block.isValid()){
-        return nullptr;
-    }
+    LOG_INFO("3");
     block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
     //2.2 if sync wait for complete or async return immediately
+    LOG_INFO("4");
     if(sync){
         provider->getVolumeBlock(block.data,blockIndex);
         bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
         assert(ret);
         impl->recordPtrForBlockIndex(block.data, blockIndex);
+        LOG_INFO("5");
         return block.data;
     }
     else{
@@ -517,6 +522,7 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
           assert(ret);
           impl->recordPtrForBlockIndex(block.data, blockIndex);
         });
+        LOG_INFO("6");
         t.detach();
         return nullptr;
     }
@@ -527,6 +533,11 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
     //todo 会导致存储两个相同的Block
     //1. query from cache if the block data is already cached
     auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex);
+    if(block.isValid()){
+        impl->recordPtrForBlockIndex(block.data, blockIndex);
+        return block.data;
+    }
+     block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::NONE,blockIndex);
     if(block.isValid()){
         impl->recordPtrForBlockIndex(block.data, blockIndex);
         return block.data;
