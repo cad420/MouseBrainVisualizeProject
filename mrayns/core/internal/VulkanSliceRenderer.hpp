@@ -15,6 +15,8 @@ class VulkanSliceRenderer:public SliceRenderer{
     Type getRendererType() const override;
     const Framebuffer& getFrameBuffers() const override;
     void render(const Slice&) override;
+    void render(const SliceExt& slice,RenderType type) override;
+    void setTransferFunction(TransferFunction) override;
 
     static VulkanSliceRenderer* Create(VulkanNodeSharedResourceWrapper*);
 

@@ -50,12 +50,22 @@ class Renderer{
 
 class SliceRenderer: public Renderer{
   public:
+    //slice renderer will create fixed framebuffer size
+    static constexpr int MaxSliceW = 1920;
+    static constexpr int MaxSliceH = 1080;
+
     /**
      * @param slice
      * @note slice's image size is different for each render call with a high probability.
      */
     virtual void render(const Slice& slice) = 0;
 
+    enum RenderType:uint32_t{
+        MIP = 0,
+        RAYCAST = 1,
+    };
+
+    virtual void render(const SliceExt& slice,RenderType type){}
   protected:
     virtual ~SliceRenderer() = default;
 };

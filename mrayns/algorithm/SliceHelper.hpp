@@ -15,6 +15,7 @@ struct SliceHelper{
         if(slice.voxels_per_pixel < 1.f) return 0;
         return static_cast<int>(std::floor(std::log2(slice.voxels_per_pixel)));
     }
+    inline static float SliceStepVoxelRatio = 0.5f;
 };
 
 MRAYNS_END
