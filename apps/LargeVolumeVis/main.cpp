@@ -178,9 +178,12 @@ void Run(){
           auto p = block_volume_manager.getVolumeBlock(block,false);
           STOP_TIMER("get volume block")
           missed_block_buffer[block] = p;
-          if(p){
-              block_volume_manager.lock(p);
+          if(p && block_volume_manager.lock(p)){
+//              block_volume_manager.lock(p);//check return
               missed_blocks.emplace_back(block);
+          }
+          else{
+              missed_block_buffer[block] = nullptr;
           }
       }
 
@@ -198,21 +201,24 @@ void Run(){
               block_entries[entry.value] = entry.entry;
               missed_blocks.emplace_back(entry.value);
           }
+          else{
+              block_volume_manager.unlock(missed_block_buffer[entry.value]);
+          }
           cur_renderer_page_table.emplace_back(entry.entry,entry.value);
       }
       LOG_INFO("volume render missed block count: {}",missed_blocks.size());
-      total_missed_count += missed_blocks.size();
-      LOG_INFO("total missed count since start render: {}",total_missed_count);
+
+//      total_missed_count += missed_blocks.size();
+//      LOG_INFO("total missed count since start render: {}",total_missed_count);
       //4 get block and upload
 
       auto thread_id = std::this_thread::get_id();
       auto tid = std::hash<decltype(thread_id)>()(thread_id);
       auto task = [&](int thread_idx,Volume::BlockIndex block_index){
-
-
-          std::lock_guard<std::mutex> lk(block_entries_mtx);
+//          std::lock_guard<std::mutex> lk(block_entries_mtx);
         //单机单线程模式
             auto p = missed_block_buffer[block_index];
+            assert(p);
             if(!p) return;
         //多线程模式
 //          auto p = block_volume_manager.getVolumeBlockAndLock(block_index);
@@ -231,11 +237,12 @@ void Run(){
               volume.getBlockLength(),
               volume.getBlockLength()
           };
-          auto ret = gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),true);
+          auto ret = gpu_resource.uploadResource(desc,entry,extent,p,volume.getBlockSize(),false);
           assert(ret);
           ret = block_volume_manager.unlock(p);
-          missed_block_buffer[block_index] = nullptr;
+//          missed_block_buffer[block_index] = nullptr;
           assert(ret);
+          page_table.update(block_index);
       };
       //4.1 get volume block and upload to GPUResource
       parallel_foreach(missed_blocks,task,missed_blocks.size());
@@ -243,14 +250,14 @@ void Run(){
       gpu_resource.flush(tid);
       //4.2 release write to read lock
 
-      for(const auto& item:missed_block_buffer){
-          if(item.second)
-              block_volume_manager.unlock(item.second);
-      }
+//      for(const auto& item:missed_block_buffer){
+//          if(item.second)
+//              block_volume_manager.unlock(item.second);
+//      }
 
-      for(const auto& block:missed_blocks){
-          page_table.update(block);
-      }
+//      for(const auto& block:missed_blocks){
+//          page_table.update(block);
+//      }
 
       volume_renderer->updatePageTable(cur_renderer_page_table);
 
@@ -265,9 +272,9 @@ void Run(){
       //5.2 release read lock for page table
 
 
-          for (const auto &block : intersect_blocks)
+          for (const auto &item : cur_renderer_page_table)
           {
-              page_table.release(block);
+              page_table.release(item.second);
           }
           STOP_TIMER("release page table")
       }

@@ -18,7 +18,7 @@ class VulkanVolumeRenderer:public VolumeRenderer{
     const Framebuffer& getFrameBuffers() const override;
     void render(const VolumeRendererCamera&) override;
     void setTransferFunction(TransferFunctionExt1D) override;
-    void updatePageTable(std::vector<PageTableItem>) override;
+    void updatePageTable(const std::vector<PageTableItem>&) override;
 
     static VulkanVolumeRenderer* Create(VulkanNodeSharedResourceWrapper*);
 

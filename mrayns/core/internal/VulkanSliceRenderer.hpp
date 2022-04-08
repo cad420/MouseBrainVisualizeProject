@@ -17,6 +17,7 @@ class VulkanSliceRenderer:public SliceRenderer{
     void render(const Slice&) override;
     void render(const SliceExt& slice,RenderType type) override;
     void setTransferFunction(TransferFunction) override;
+    void updatePageTable(const std::vector<PageTableItem>&) override;
 
     static VulkanSliceRenderer* Create(VulkanNodeSharedResourceWrapper*);
 

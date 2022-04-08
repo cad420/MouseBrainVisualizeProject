@@ -64,6 +64,7 @@ struct GPUResource::Impl{
     //https://stackoverflow.com/questions/31112852/how-stdunordered-map-is-implemented
     //unordered_map is thread-safe even each thread write different key for value
     std::unordered_map<size_t,std::vector<VkCommandBuffer>> thread_cmd;
+    std::unordered_map<size_t,std::vector<StagingBuffer>> thread_staging_buffers;
     std::mutex thread_cmd_mtx;
 
     using RendererPtr = std::unique_ptr<Renderer,internal::VulkanRendererDeleter>;
@@ -378,10 +379,9 @@ struct GPUResource::Impl{
         allocInfo.commandBufferCount = 1;
 
         VkCommandBuffer commandBuffer;
-        {
-            std::lock_guard<std::mutex> lk(node_vulkan_res->cmd_pool_mtx);
-            VK_EXPR(vkAllocateCommandBuffers(node_vulkan_res->device, &allocInfo, &commandBuffer));
-        }
+
+        VK_EXPR(vkAllocateCommandBuffers(node_vulkan_res->device, &allocInfo, &commandBuffer));
+
         assert(commandBuffer);
 
         VkCommandBufferBeginInfo beginInfo{};
@@ -517,7 +517,7 @@ struct GPUResource::Impl{
         copyToStagingBuffer(stagingBuffer,data,size);
 
 
-
+        std::lock_guard<std::mutex> lk(node_vulkan_res->transfer_mtx);
         auto asyncTransferCommand = beginSingleTimeCommands();
 
         VkBufferImageCopy region{};
@@ -536,8 +536,11 @@ struct GPUResource::Impl{
 
         VK_EXPR(vkEndCommandBuffer(asyncTransferCommand));
 
-        std::lock_guard<std::mutex> lk(thread_cmd_mtx);
-        thread_cmd[threadID].emplace_back(asyncTransferCommand);
+        {
+            std::lock_guard<std::mutex> lk(thread_cmd_mtx);
+            thread_cmd[threadID].emplace_back(asyncTransferCommand);
+            thread_staging_buffers[threadID].emplace_back(stagingBuffer);
+        }
         return true;
     }
     void copyToStagingBuffer(const StagingBuffer& stagingBuffer,void* data,size_t size){
@@ -583,6 +586,13 @@ struct GPUResource::Impl{
             for(auto& commandBuffer:cmd){
                 vkFreeCommandBuffers(node_vulkan_res->device, node_vulkan_res->transferCommandPool, 1, &commandBuffer);
             }
+        }
+        {
+            std::lock_guard<std::mutex> lk(thread_cmd_mtx);
+            for(auto& stagingBuffer : thread_staging_buffers[threadID]){
+                destroyStagingBuffer(stagingBuffer);
+            }
+            thread_staging_buffers[threadID].clear();
         }
         STOP_TIMER("flush staging buffer")
         LOG_DEBUG("flush staging buffer to gpu texture");

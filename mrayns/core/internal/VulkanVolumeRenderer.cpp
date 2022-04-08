@@ -1862,7 +1862,7 @@ void VulkanVolumeRenderer::setTransferFunction(TransferFunctionExt1D tf)
 {
     impl->setTransferFunction1D(tf.tf,tf.TFDim,sizeof(tf.tf)/sizeof(float));
 }
-void VulkanVolumeRenderer::updatePageTable(std::vector<PageTableItem> items)
+void VulkanVolumeRenderer::updatePageTable(const std::vector<PageTableItem>& items)
 {
     impl->updatePageTable(items);
 }

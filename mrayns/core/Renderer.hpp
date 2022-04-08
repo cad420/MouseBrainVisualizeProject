@@ -35,7 +35,7 @@ class Renderer{
     //not necessary for slice render
     virtual void setTransferFunction(TransferFunction) {};
     using PageTableItem = std::pair<PageTable::EntryItem,PageTable::ValueItem>;
-    virtual void updatePageTable(std::vector<PageTableItem>){}
+    virtual void updatePageTable(const std::vector<PageTableItem>&){}
     virtual Type getRendererType() const = 0;
     virtual const Framebuffer& getFrameBuffers() const = 0;
     virtual ~Renderer() = default;

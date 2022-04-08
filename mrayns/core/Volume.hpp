@@ -47,6 +47,10 @@ class Volume{
     int getBlockSize() const { return block_length * block_length * block_length;}
     bool isValid() const { return name != EmptyVolume && voxel_type != UNKNOWN;}//could inspect more like dim and space
     int getMaxLod() const { return max_lod; }
+    float getVoxel(){
+        auto space = getVolumeSpace();
+        return (std::min)({space.x,space.y,space.z});
+    }
     void clear(){
         name = EmptyVolume;
         block_length = padding = 0;

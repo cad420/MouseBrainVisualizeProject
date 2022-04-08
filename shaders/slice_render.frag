@@ -7,7 +7,7 @@ const int MaxVolumeLod = 12;
 layout(binding = 0) uniform sampler3D CachedVolume[MaxTextureNum];
 layout(binding = 1) uniform sampler1D TransferTable;
 layout(std140,binding = 2) uniform VolumeInfoUBO{
-    uvec4 volume_dim;//x y z and max_lod //16
+    uvec4 volume_board;//x y z and max_lod //16
     uvec3 lod0_block_dim; //16
     vec3 volume_space; //16
     vec3 inv_volume_space; //16
@@ -60,7 +60,7 @@ uvec4 QueryPageTable(in uvec4 key){
 const int RENDER_TYPE_MIP = 0;
 const int RENDER_TYPE_RAYCAST = 1;
 layout(std140,binding = 4) uniform RenderParams{
-    vec3 origin;
+    vec3 origin;//center of slice
     vec3 normal;
     vec3 x_dir;//normalized
     vec3 y_dir;//normalized
@@ -78,7 +78,18 @@ bool InRenderRegion(vec2 uv){
     bool ok2 = uv.x < renderParams.max_p.x + 1.0 && uv.y < renderParams.max_p.y + 1.0;
     return ok1 && ok2;
 }
+bool InsideVolume(in vec3 samplePos){
+    return samplePos.x >= 0.f && samplePos.y >= 0.f && samplePos.z >= 0.f
+        && samplePos.x <= volumeInfoUBO.volume_board.x
+        && samplePos.y <= volumeInfoUBO.volume_board.y
+        && samplePos.z <= volumeInfoUBO.volume_board.z;
+}
 int VirtualSample(in int sampleLod,in vec3 samplePos,out float sampleScalar){
+    if(!InsideVolume(samplePos)){
+        sampleScalar = 0.f;
+        return 0;
+    }
+
     int sampleLodT = 1 << sampleLod;
     vec3 block_index = vec3(ivec3(samplePos / (volumeInfoUBO.virtual_block_length_space * sampleLodT)));
 
@@ -110,6 +121,11 @@ vec4 MipRender(vec2 uv){
 
         int ret = VirtualSample(sample_lod,ray_sample_pos,sample_scalar);
 
+        if(ret == 0){
+            max_scalar = 1.f;
+            break;
+        }
+
         if(sample_scalar > max_scalar){
             max_scalar = sample_scalar;
         }
@@ -140,6 +156,11 @@ vec4 RayCastRender(vec2 uv){
 
         int ret = VirtualSample(sample_lod,ray_sample_pos,sample_scalar);
 
+        if(ret == 0){
+            accumelate_color = vec4(1.f);
+            break;
+        }
+
         if(sample_scalar > 0.f){
             vec4 sample_color = texture(TransferTable,sample_scalar);
             if(sample_color.w > 0.f){
@@ -162,6 +183,7 @@ void main() {
         discard;
     }
     uv.y = renderParams.window.y - uv.y;
+    uv -= renderParams.window * 0.5;
 
     if(renderParams.render_type == RENDER_TYPE_MIP)
         oFragColor = MipRender(uv);
@@ -173,4 +195,5 @@ void main() {
     if(oFragColor.a == 0.f)
         discard;
 
+    oFragColor.a = 1.f;
 }

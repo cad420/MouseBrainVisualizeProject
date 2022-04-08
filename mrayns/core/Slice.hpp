@@ -18,7 +18,7 @@ struct Slice{
     int n_pixels_w;
     int n_pixels_h;
 
-    Vector3f origin;//top left corner
+    Vector3f origin;//center of slice
     Vector3f normal;
     Vector3f x_dir;//left -> right
     Vector3f y_dir;//top -> bottom

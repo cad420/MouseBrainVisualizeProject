@@ -84,7 +84,7 @@ struct VulkanSliceRenderer::Impl{
     Volume volume;
     static constexpr int MaxVolumeLod = 12;
     struct VolumeInfo{
-        Vector4ui volume_dim;//x y z max_lod
+        Vector4f volume_board;//x y z max_lod
         Vector3ui lod0_block_dim;uint32_t padding0 = 1;
         Vector3f volume_space;uint32_t padding1 = 2;
         Vector3f inv_volume_space;uint32_t padding2 = 3;
@@ -224,18 +224,22 @@ struct VulkanSliceRenderer::Impl{
     }
     void updateVolumeInfo(){
         assert(volume.isValid());
-
-        volume.getVolumeDim(reinterpret_cast<int &>(volume_info.volume_dim.x),
-                            reinterpret_cast<int &>(volume_info.volume_dim.y),
-                            reinterpret_cast<int &>(volume_info.volume_dim.z));
-        volume_info.volume_dim.w = volume.getMaxLod();
+        Vector3ui volume_dim;
+        volume.getVolumeDim(reinterpret_cast<int &>(volume_dim.x),
+                            reinterpret_cast<int &>(volume_dim.y),
+                            reinterpret_cast<int &>(volume_dim.z));
+        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
+        volume_info.volume_board = Vector4f{volume_dim.x * volume_info.volume_space.x,
+                                            volume_dim.y * volume_info.volume_space.y,
+                                            volume_dim.z * volume_info.volume_space.z,1.f};
+        volume_info.volume_board.w = volume.getMaxLod();
         volume_info.padding_block_length = volume.getBlockLength();
         volume_info.padding = volume.getBlockPadding();
 
         volume_info.virtual_block_length = volume_info.padding_block_length - volume_info.padding * 2;
 
-        volume_info.lod0_block_dim = (volume_info.volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
-        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
+        volume_info.lod0_block_dim = (volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
+
         volume_info.inv_volume_space = 1.f / volume_info.volume_space;
         volume_info.virtual_block_length_space = (float)volume_info.virtual_block_length * volume_info.volume_space;
 
@@ -471,7 +475,7 @@ struct VulkanSliceRenderer::Impl{
         }
         //create descriptor sets
         {
-            VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             allocateInfo.descriptorPool = render_vk_shared_res->descriptorPool;
             allocateInfo.descriptorSetCount = 1;
             allocateInfo.pSetLayouts = &render_vk_shared_res->descriptorSetLayout;
@@ -712,6 +716,12 @@ struct VulkanSliceRenderer::Impl{
 
         endSingleTimeCommand(commandBuffer);
     }
+    Impl(){
+        renderer_vk_res = std::make_unique<SliceRendererVulkanPrivateResourceWrapper>();
+    }
+    ~Impl(){
+        destroy();
+    }
 };
 
 
@@ -751,7 +761,7 @@ static void CreateVulkanSliceRendererSharedResources(
         attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[1].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         // only 1 subpass
         std::array<VkSubpassDescription,1> subpassDesc{};
@@ -759,7 +769,7 @@ static void CreateVulkanSliceRendererSharedResources(
         std::array<VkAttachmentReference,1> colorRefs{};
         colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
-        VkAttachmentReference depthRef = {1,VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depthRef = {1,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
         subpassDesc[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpassDesc[0].colorAttachmentCount = colorRefs.size();
@@ -952,7 +962,7 @@ static void CreateVulkanSliceRendererSharedResources(
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.layout = renderer_vk_res->pipelineLayout;
         pipelineInfo.renderPass = renderer_vk_res->renderPass;
-        pipelineInfo.subpass = 1;
+        pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
         VK_EXPR(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pipelineInfo,nullptr,&renderer_vk_res->pipeline));
@@ -961,7 +971,7 @@ static void CreateVulkanSliceRendererSharedResources(
     }
     //create descriptor pool
     {
-        std::array<VkDescriptorPoolSize,3> poolSize{};
+        std::array<VkDescriptorPoolSize,2> poolSize{};
         poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSize[0].descriptorCount = max_renderer_num * (5+1);
         poolSize[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1034,6 +1044,10 @@ void VulkanSliceRenderer::setTransferFunction(TransferFunction tf)
     TransferFunctionExt1D transferFunctionExt1D{tf};
     ::mrayns::ComputeTransferFunction1DExt(transferFunctionExt1D);
     impl->setTransferFunctionExt1D(transferFunctionExt1D);
+}
+void VulkanSliceRenderer::updatePageTable(const std::vector<PageTableItem> &items)
+{
+    impl->updatePageTable(items);
 }
 
 }
