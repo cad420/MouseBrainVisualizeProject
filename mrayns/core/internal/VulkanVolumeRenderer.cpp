@@ -435,7 +435,7 @@ struct VulkanVolumeRenderer::Impl{
     void destroy(){
 
     }
-
+    //todo check if volume is same as prev
     void setVolume(Volume volume){
         //0. check if resource about this volume is cached
         //0.1 reload cached resource *(no need to cache)

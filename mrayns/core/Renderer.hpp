@@ -76,6 +76,9 @@ class VolumeRenderer: public Renderer{
 
     virtual void render(const VolumeRendererCamera&) = 0;
 
+    virtual bool renderPass(const VolumeRendererCamera&,bool newFrame){ return true;}
+
+    //todo change pure virtual to virtual
     virtual void setTransferFunction(TransferFunctionExt1D) = 0;
   protected:
     virtual ~VolumeRenderer() = default;

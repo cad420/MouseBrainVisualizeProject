@@ -14,6 +14,8 @@ include(${PROJECT_SOURCE_DIR}/deps/spdlog.cmake)
 
 find_package(Vulkan REQUIRED)
 
+find_package(OpenMP REQUIRED)
+
 add_library(MRAYNS_CORE STATIC ${MRAYNS_SRCS})
 
 target_include_directories(
@@ -32,6 +34,7 @@ target_link_libraries(
         PRIVATE
         ${Vulkan_LIBRARY}
         glfw
+        OpenMP::OpenMP_CXX
 )
 
 target_compile_features(

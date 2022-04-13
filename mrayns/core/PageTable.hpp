@@ -75,6 +75,8 @@ class PageTable{
 
     std::vector<EntryItemExt> queriesAndLockExt(const std::vector<ValueItem>& );
 
+    bool queryCached(const ValueItem&);
+
     EntryItemExt getEntryAndLock(ValueItem);
 
     //get all entries the same time and lock all

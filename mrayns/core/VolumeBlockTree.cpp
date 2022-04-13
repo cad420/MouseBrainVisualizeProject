@@ -305,7 +305,7 @@ std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeInterse
             }
         }
     }
-    LOG_INFO("intersect block with level ({}) count ({})",level,intersect_blocks.size());
+//    LOG_INFO("intersect block with level ({}) count ({})",level,intersect_blocks.size());
     return intersect_blocks;
 }
 

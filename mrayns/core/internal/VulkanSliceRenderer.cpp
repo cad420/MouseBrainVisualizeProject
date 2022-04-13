@@ -112,7 +112,7 @@ struct VulkanSliceRenderer::Impl{
     }render_info;
 
     const Framebuffer& getFrameRenderResult(){
-        START_TIMER
+//        START_TIMER
         VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &renderer_vk_res->resultCopyCommand;
@@ -123,16 +123,19 @@ struct VulkanSliceRenderer::Impl{
         VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
         vkDestroyFence(shared_renderer_vk_res->shared_device,fence,nullptr);
 
+        {
+//            START_TIMER
+            ::memcpy(render_result.getColors().data(), result_color_mapped_ptr, render_result.getColors().size());
+//            STOP_TIMER("render result copy")
+        }
 
-        ::memcpy(render_result.getColors().data(),result_color_mapped_ptr,render_result.getColors().size());
-
-        STOP_TIMER("get render result")
+//        STOP_TIMER("get render result")
         return render_result;
     }
 
     void render(const SliceExt& slice, RenderType type){
         //todo viewport
-        START_TIMER
+//        START_TIMER
         updateRenderParamsUBO(slice,type);
 
         //submit draw commands to queue
@@ -145,7 +148,7 @@ struct VulkanSliceRenderer::Impl{
         VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
         VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
         vkDestroyFence(shared_renderer_vk_res->shared_device,fence,nullptr);
-        STOP_TIMER("vulkan render")
+//        STOP_TIMER("vulkan render")
 
     }
     void setVolume(const Volume& volume){
@@ -604,11 +607,12 @@ struct VulkanSliceRenderer::Impl{
             VmaAllocationCreateInfo allocInfo{};
             allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
             allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo info{};
 #ifdef DEBUG_WINDOW
             createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferCreateInfo.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                          renderer_vk_res->result_color.buffer,renderer_vk_res->result_color.mem);
 #else
-            vmaCreateBuffer(renderer_vk_res->allocator,&bufferCreateInfo,&allocInfo,&renderer_vk_res->result_color.buffer,&renderer_vk_res->result_color.allocation,nullptr);
+            vmaCreateBuffer(renderer_vk_res->allocator,&bufferCreateInfo,&allocInfo,&renderer_vk_res->result_color.buffer,&renderer_vk_res->result_color.allocation,&info);
 #endif
 
             VkCommandBufferAllocateInfo cmdBufAllocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
@@ -630,7 +634,8 @@ struct VulkanSliceRenderer::Impl{
 #ifdef DEBUG_WINDOW
             vkMapMemory(render_vk_shared_res->shared_device,renderer_vk_res->result_color.mem,0,render_result.getColors().size(),0,&result_color_mapped_ptr);
 #else
-            vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->result_color.allocation,&result_color_mapped_ptr);
+//            vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->result_color.allocation,&result_color_mapped_ptr);
+            result_color_mapped_ptr = info.pMappedData;
 #endif
         }
     }
@@ -1004,18 +1009,17 @@ void VulkanSliceRenderer::render(const Slice &slice)
 
 VulkanSliceRenderer *VulkanSliceRenderer::Create(VulkanNodeSharedResourceWrapper *node_vk_res)
 {
-    static SliceRendererVulkanSharedResourceWrapper renderer_vk_res;
-    static bool renderer_shared_vk_res_init = false;
-    if(!renderer_shared_vk_res_init){
-        SetupVulkanRendererSharedResources(node_vk_res,&renderer_vk_res);
-        CreateVulkanSliceRendererSharedResources(&renderer_vk_res,node_vk_res);
-        renderer_shared_vk_res_init = true;
+    static std::unordered_map<VulkanNodeSharedResourceWrapper*,std::pair<SliceRendererVulkanSharedResourceWrapper,bool>> renderer_vk_res_map;
+    if(!renderer_vk_res_map[node_vk_res].second){
+        SetupVulkanRendererSharedResources(node_vk_res,&renderer_vk_res_map[node_vk_res].first);
+        CreateVulkanSliceRendererSharedResources(&renderer_vk_res_map[node_vk_res].first,node_vk_res);
+        renderer_vk_res_map[node_vk_res].second = true;
     }
     assert(node_vk_res);
     auto ret = new VulkanSliceRenderer();
     try{
         ret->impl = std::make_unique<Impl>();
-        ret->impl->initResources(&renderer_vk_res,node_vk_res);
+        ret->impl->initResources(&renderer_vk_res_map[node_vk_res].first,node_vk_res);
     }
     catch (const std::exception& err)
     {

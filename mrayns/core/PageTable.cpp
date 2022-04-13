@@ -111,6 +111,7 @@ struct PageTable::Impl{
                 return false;
             }
         }
+
         void appendItem(Item item){
             //todo if check existed before append
 //            if(query(item.first,item.second)) return;
@@ -163,7 +164,7 @@ struct PageTable::Impl{
         std::map<int,LRU2> mq;
         MQ(){
             for(int i = MinP;i<=MaxP;i++){
-                mq[i] = LRU2{64,64};
+                mq[i] = LRU2{192,192};
             }
         }
         size_t size(){
@@ -225,7 +226,7 @@ struct PageTable::Impl{
                 return;
             }
         }
-
+        //todo if full?
         void appendItem(Item item){
             int p = getPriority(item.first);
             appendItem(item,p);
@@ -528,10 +529,11 @@ struct PageTable::Impl{
     //此时应该返回额外的信息表明这些数据已经缓存了 并且将其Read Lock
     //std::vector<std::pair<EntryItem,bool>> true代表需要上传更新 false代表已经缓存
     std::vector<EntryItemExt> getEntriesAndWriteLock(const std::vector<ValueItem>& values){
+
         std::vector<EntryItemExt> ret;
         //1. 查询是否存在于WriteLock链表中
         //理论上  notify_one 通知的lk优先级更大 因为notify_one发生了 lk稀释之前???
-        LOG_INFO("111");
+//        LOG_INFO("111");
         std::vector<std::thread> tasks;
         std::vector<ValueItem> remains_after_write;
         for(const auto& value:values){
@@ -598,6 +600,10 @@ struct PageTable::Impl{
         if(remains_after_cached.empty()) return ret;
         //4. 从free entries中获取entry用于上传
         LOG_INFO("444");
+        LOG_INFO("write lock count {}",page_table.write_locked_items.size());
+        LOG_INFO("read lock count {}",page_table.read_locked_items.size());
+        LOG_INFO("cached count {}",page_table.cached_items.size());
+        LOG_INFO("free count {}",page_table.free_entries.size());
         std::vector<ValueItem> remains_after_free;
         {
             std::lock_guard<std::mutex> lk(free_mtx);
@@ -616,6 +622,7 @@ struct PageTable::Impl{
         if(remains_after_free.empty()) return ret;
         //5. 淘汰Cache中某些Item从而获取EntryItem用于上传
         LOG_INFO("555");
+
         {
             std::unique_lock<std::mutex> lk(cache_mtx);
 
@@ -656,7 +663,7 @@ void PageTable::clear()
 {
     impl->clearPageTable();
 }
-static size_t locked_id = 0;
+static thread_local size_t locked_id = 0;
 bool IsAcquireLocked(){
     return locked_id;
 }
@@ -670,7 +677,7 @@ void PageTable::acquireLock()
 }
 void PageTable::acquireRelease()
 {
-    LOG_INFO("call PageTable::unlock");
+//    LOG_INFO("call PageTable::unlock");
     assert(locked_id);
     impl->unlockCacheTable();
     locked_id = 0;
