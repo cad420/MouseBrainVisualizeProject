@@ -352,10 +352,16 @@ struct VulkanVolumeRenderer::Impl{
         submitInfo.pCommandBuffers = &renderer_vk_res->drawCommand;
         VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VkFence fence;
-        VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device,&fenceInfo,nullptr,&fence));
-        VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
+            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
+        }
         VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
-        vkDestroyFence(shared_renderer_vk_res->shared_device,fence,nullptr);
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
+        }
         STOP_TIMER("vulkan render")
 
 #ifdef DEBUG_WINDOW
@@ -418,11 +424,16 @@ struct VulkanVolumeRenderer::Impl{
         submitInfo.pCommandBuffers = &renderer_vk_res->resultCopyCommand;
         VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VkFence fence;
-        VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device,&fenceInfo,nullptr,&fence));
-        VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
+            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue, 1, &submitInfo, fence));
+        }
         VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
-        vkDestroyFence(shared_renderer_vk_res->shared_device,fence,nullptr);
-
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
+        }
 
         ::memcpy(render_result.getColors().data(),result_color_mapped_ptr,render_result.getColors().size());
 
