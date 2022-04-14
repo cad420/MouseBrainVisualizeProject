@@ -7,7 +7,7 @@ const int MaxVolumeLod = 12;
 layout(binding = 0) uniform sampler3D CachedVolume[MaxTextureNum];
 layout(binding = 1) uniform sampler1D TransferTable;
 layout(std140,binding = 2) uniform VolumeInfoUBO{
-    uvec4 volume_board;//x y z and max_lod //16
+    vec4 volume_board;//x y z and max_lod //16
     uvec3 lod0_block_dim; //16
     vec3 volume_space; //16
     vec3 inv_volume_space; //16
@@ -125,6 +125,7 @@ vec4 MipRender(vec2 uv){
             max_scalar = 1.f;
             break;
         }
+
 
         if(sample_scalar > max_scalar){
             max_scalar = sample_scalar;
