@@ -73,8 +73,8 @@ struct GPUResource::Impl{
     std::queue<Renderer*> available_renderers;
     std::condition_variable renderer_cv;
 
-    bool createRenderer(Renderer::Type type){
-        std::lock_guard<std::mutex> lk(renderer_mtx);
+    bool _createRenderer(Renderer::Type type){
+//        std::lock_guard<std::mutex> lk(renderer_mtx);
         if(limit.renderer_count < limit.max_renderer_limit){
             RendererPtr renderer;
             if(type == Renderer::VOLUME){
@@ -84,6 +84,7 @@ struct GPUResource::Impl{
                 renderer = RendererPtr(internal::VulkanSliceRenderer::Create(node_vulkan_res.get()));
             }
             else{
+                LOG_ERROR("renderer type not supported!");
                 return false;
             }
             if(!renderer) return false;
@@ -119,11 +120,17 @@ struct GPUResource::Impl{
                 break;
             }
         }
-        if(!exist) return nullptr;
-        //wait will unlock the mutex and when notified will lock the mutex again
-        renderer_cv.wait(lk,[this](){
-            return !available_renderers.empty();
-        });
+        if(!exist){
+            bool e = _createRenderer(type);
+            if(!e){
+                return nullptr;
+            }
+            else{
+                lk.unlock();
+                return getRenderer(type);
+            }
+        }
+        //check if there is an available renderer
         int n = available_renderers.size();
         while(n--){
             auto renderer = available_renderers.front();
@@ -135,9 +142,18 @@ struct GPUResource::Impl{
                 available_renderers.push(renderer);
             }
         }
-        //still not find
-        LOG_ERROR("get renderer internal unknown error");
-        return nullptr;
+        bool e = _createRenderer(type);
+        if(!e){
+            return nullptr;
+        }
+        else{
+            //wait will unlock the mutex and when notified will lock the mutex again
+            renderer_cv.wait(lk,[this](){
+              return !available_renderers.empty();
+            });
+        }
+        lk.unlock();
+        return getRenderer(type);
     }
     bool releaseRenderer(Renderer* renderer){
         std::unique_lock<std::mutex> lk(renderer_mtx);
@@ -729,20 +745,10 @@ Renderer *GPUResource::getRenderer(Renderer::Type type)
 {
     auto renderer = impl->getRenderer(type);
     if(!renderer){
-        LOG_ERROR("try to get renderer but created renderer number is zero!");
-        auto res = impl->createRenderer(type);
-        if(res){
-            renderer = impl->getRenderer(type);
-            assert(renderer);
-            return renderer;
-        }
-        else{
-            throw std::runtime_error("internal error: can't get renderer");
-        }
+        LOG_ERROR("can't get this type of renderer");
     }
-    else{
-        return renderer;
-    }
+    return renderer;
+
 }
 
 void GPUResource::releaseRenderer(Renderer *renderer)
