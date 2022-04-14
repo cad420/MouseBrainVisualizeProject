@@ -5,6 +5,8 @@
 #include "Volume.hpp"
 #include "../extension/VolumeBlockProviderInterface.hpp"
 #include <memory>
+#include <mutex>
+#include "../common/Parrallel.hpp"
 MRAYNS_BEGIN
 /**
  *
@@ -75,6 +77,9 @@ class BlockVolumeManager{
     std::unique_ptr<BlockVolumeManagerImpl> impl;
     std::unique_ptr<IVolumeBlockProviderInterface> provider;
     Volume volume;
+    std::mutex get_mtx;
+    std::mutex lock_mtx;
 
+    ThreadPool thread_pool;
 };
 MRAYNS_END

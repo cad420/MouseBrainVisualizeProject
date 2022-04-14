@@ -17,7 +17,7 @@
 #define STOP_TIMER(msg) \
 auto __end = std::chrono::steady_clock::now();\
 auto __t = std::chrono::duration_cast<std::chrono::milliseconds>(__end-__start);\
-std::cout<<msg<<" cost time: "<<__t.count()<<"ms"<<std::endl;
+LOG_INFO("{} cost time: {}ms",msg,__t.count());
 
 MRAYNS_BEGIN
 

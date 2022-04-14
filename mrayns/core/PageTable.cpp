@@ -374,7 +374,7 @@ struct PageTable::Impl{
         assert(queryValueItemStatus(lockItem.second)!=ReadLocked);
         std::lock_guard<std::mutex> lk(read_mtx);
         page_table.read_locked_items.emplace_back(lockItem,1);
-        read_cv.notify_one();
+        read_cv.notify_all();
     }
     void pushToWriteLock(LockItem lockItem){
 //        assert(queryValueItemStatus(lockItem.second)!=WriteLocked);

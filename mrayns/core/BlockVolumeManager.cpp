@@ -165,6 +165,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         return buffer_map.at(ptr);
     }
     bool erasePtrRecording(void* ptr){
+        std::lock_guard<std::mutex> lk(buffer_mtx);
         if(buffer_map.find(ptr)==buffer_map.end()){
             return false;
         }
@@ -201,7 +202,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         }
     }
     static size_t GetCurrentT(){
-        static std::atomic<size_t> count;
+        static std::atomic<size_t> count=0;
         return ++count;
     }
 
@@ -210,7 +211,14 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     //否则 一定会返回一个MemoryBlock 但是其原来可能存储着数据
     //locked_mem_blocks里的数据无法被获取
     MemoryBlock getFreeMemoryBlock(Lock::Type lockType,BlockIndex index){
-        LOG_INFO("free count {}, locked count {}",free_mem_blocks.size(),locked_mem_blocks.size());
+        int read_count = 0;
+        {
+            std::lock_guard<std::mutex> lk(locked_mtx);
+            for(auto& mem:locked_mem_blocks){
+                if(mem.lock.isReadLocked()) read_count++;
+            }
+        }
+        LOG_INFO("free count {}, locked count {}, read lock count {}",free_mem_blocks.size(),locked_mem_blocks.size(),read_count);
         if(free_mem_blocks.empty()){
             std::unique_lock<std::mutex> lk(wait_mtx);
             cv.wait(lk,[&](){
@@ -258,16 +266,17 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
 
         //memory block in free
         {
-            std::lock_guard<std::mutex> lk(free_mtx);
+            std::unique_lock<std::mutex> lk(free_mtx);
             auto mem_desc = queryMemoryBlockFromFree(index);
             if(mem_desc.isLoaded()){
                 assert(!mem_desc.lock.isLocked());
                 if(dstType == mem_desc.lock.getLockType()) return 1; //mem in free to NONE lock just return is ok
                 if(force || Lock::isLockChangeValid(mem_desc.lock.getLockType(),dstType)){
-                    std::lock_guard<std::mutex> lkk(locked_mtx);
                     removeMemoryBlockDescInFree(mem_desc);
+                    lk.unlock();
                     mem_desc.lock = dstType;
                     mem_desc.t = GetCurrentT();
+                    std::lock_guard<std::mutex> lkk(locked_mtx);
                     appendMemoryBlockToLocked(mem_desc);
                     return 1;
                 }
@@ -278,7 +287,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         }
         //memory block in locked
         {
-            std::lock_guard<std::mutex> lk(locked_mtx);
+            std::unique_lock<std::mutex> lk(locked_mtx);
             auto mem_desc = queryMemoryBlockFromLocked(index);
             if(mem_desc.isLoaded()){
                 assert(mem_desc.lock.isLocked());
@@ -286,10 +295,11 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
                 if(force || Lock::isLockChangeValid(mem_desc.lock.getLockType(),dstType)){
                     if(dstType == Lock::NONE){
                         //move mem_desc from locked to free
-                        std::lock_guard<std::mutex> lkk(free_mtx);
                         removeMemoryBlockDescInLocked(mem_desc);
+                        lk.unlock();
                         mem_desc.lock = dstType;
                         mem_desc.t = GetCurrentT();
+                        std::lock_guard<std::mutex> lkk(free_mtx);
                         appendMemoryBlockToFree(mem_desc);
                     }
                     else{
@@ -392,8 +402,9 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     bool addMemoryBlockReadLock(BlockIndex index,Lock::Type type){
         if(type != Lock::READ_LOCK) return false;
         {
-            std::lock_guard<std::mutex> free_lk(free_mtx);
+            std::unique_lock<std::mutex> free_lk(free_mtx);
             auto mem = queryMemoryBlockFromFree(index);
+            free_lk.unlock();
             if(mem.isLoaded()){
                 changeMemoryBlockLock(type,index,true);
                 return true;
@@ -419,15 +430,24 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     bool reduceMemoryReadBlockLock(BlockIndex index,Lock::Type type){
         if(type != Lock::READ_LOCK) return false;
         {
+
             std::unique_lock<std::mutex> locked_lk(locked_mtx);
-            auto mem = queryMemoryBlockFromLocked(index);
-            if(mem.isLoaded()){
-                if(mem.lock.isReadLocked()){
-                    mem.lock -= type;
-                    if(!mem.lock.isReadLocked()){
+            auto pmem = _queryMemoryBlockFromLocked(index);
+//            LOG_DEBUG("after query");
+            if(pmem->isLoaded()){
+                if(pmem->lock.isReadLocked()){
+                    LOG_INFO("before read lock count {}",pmem->lock.read_lock);
+                    pmem->lock -= type;
+                    if(!pmem->lock.isReadLocked()){
+//                        LOG_DEBUG("move from read to none");
+                        auto mem = *pmem;
                         removeMemoryBlockDescInLocked(mem);
-                        std::lock_guard<std::mutex> free_lk(free_mtx);
+//                        LOG_DEBUG("after remove");
+                        locked_lk.unlock();
+                        std::unique_lock<std::mutex> free_lk(free_mtx);
+//                        LOG_DEBUG("acquire free lock");
                         appendMemoryBlockToFree(mem);
+//                        LOG_DEBUG("after append");
                         return true;
                     }
                     else{
@@ -501,14 +521,14 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
                     mem.t = GetCurrentT();
                     return &mem;
                 }
-                else if(mem.lock.isReadLocked() && lockType==Lock::READ_LOCK){
+                else if(mem.lock.isReadLocked()){
                     //mem locked by READ_LOCK only can add a new read lock but can't add a write lock
                     mem.lock += lockType;
                     mem.t = GetCurrentT();
                     return &mem;
                 }
                 else{
-
+                    throw std::runtime_error("unreachable");
                 }
             }
         }
@@ -517,7 +537,6 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     //internal
 
     MemoryBlock fetchMemoryBlockFromFree(Lock::Type lockType,BlockIndex index){
-//        std::lock_guard<std::mutex> lk(free_mtx);
         decltype(free_mem_blocks) pq;
         MemoryBlock ret{};
         while(!free_mem_blocks.empty()){
@@ -584,24 +603,38 @@ const Volume &BlockVolumeManager::getVolume() const
 }
 void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync)
 {
-    //1. query from cache if the block data is already cached
-//    LOG_INFO("1");
-    auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,sync);
-    if(block.isValid()){
-        impl->recordPtrForBlockIndex(block.data, blockIndex);
+    bool writing = impl->isBlockMemoryWriting(blockIndex);
+    if(writing && sync){
+        auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,sync);
+        assert(block.isValid());
         return block.data;
     }
-
-    //2. if not cached, request data from provider
-    //2.1 get free memory block buffer
-//    LOG_INFO("2");
-    if(impl->isBlockMemoryWriting(blockIndex)){
-        LOG_ERROR("{} {} {} {} is on writing block memory!!!",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
+    else if(writing){
+        LOG_DEBUG("block is writing: {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
         return nullptr;
     }
-//    LOG_INFO("3");
-    block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
-    //2.2 if sync wait for complete or async return immediately
+    BlockVolumeManagerImpl::MemoryBlock block;
+    {
+        std::lock_guard<std::mutex> lk(get_mtx);
+        // 1. query from cache if the block data is already cached
+//        LOG_DEBUG("before fetch block: {} {} {} {}", blockIndex.x, blockIndex.y, blockIndex.z, blockIndex.w);
+         block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::NONE, blockIndex, sync);
+//        LOG_DEBUG("after fetch block: {} {} {} {}", blockIndex.x, blockIndex.y, blockIndex.z, blockIndex.w);
+        if (block.isValid())
+        {
+            impl->recordPtrForBlockIndex(block.data, blockIndex);
+            LOG_DEBUG("record ptr for block: {} {} {} {}", blockIndex.x, blockIndex.y, blockIndex.z, blockIndex.w);
+            return block.data;
+        }
+        if(impl->isBlockMemoryWriting(blockIndex)){
+            return nullptr;
+        }
+        // 2. if not cached, request data from provider
+        // 2.1 get free memory block buffer
+        block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK, blockIndex);
+    }
+
+//2.2 if sync wait for complete or async return immediately
 //    LOG_INFO("4");
     if(sync){
         provider->getVolumeBlock(block.data,blockIndex);
@@ -613,33 +646,40 @@ void *BlockVolumeManager::getVolumeBlock(const BlockIndex& blockIndex, bool sync
     }
     else{
         //maybe a thread pool is a nice choice
-        std::thread t([=](){
-            LOG_INFO("start detach thread loading: {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
-            provider->getVolumeBlock(block.data,blockIndex);
-            bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
-            assert(ret);
-           impl->recordPtrForBlockIndex(block.data, blockIndex);
+        thread_pool.AppendTask([=](){
+          LOG_INFO("start detach thread loading: {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
+          provider->getVolumeBlock(block.data,blockIndex);
+          bool ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,blockIndex,true);
+          assert(ret);
+          impl->recordPtrForBlockIndex(block.data, blockIndex);
+          LOG_DEBUG("finish detach thread loading: {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
+          LOG_DEBUG("locked count: {}, free count: {}",impl->locked_mem_blocks.size(),impl->free_mem_blocks.size());
         });
-//        LOG_INFO("6");
-        t.detach();
         return nullptr;
     }
 }
 //该函数是同步的 会等待数据块加载完毕 因此对于writelock的数据块 它应该被知道 并且等待writelock的数据块加载完
 void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 {
-    //todo 会导致存储两个相同的Block
-    //1. query from cache if the block data is already cached
-    LOG_INFO("fetching {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
-    auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK,blockIndex,true);
-    if(block.isValid()){
-        impl->recordPtrForBlockIndex(block.data, blockIndex);
+
+    if(impl->isBlockMemoryWriting(blockIndex)){
+        auto block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK, blockIndex, true);
+        assert(block.isValid());
+        impl->recordPtrForBlockIndex(block.data,blockIndex);
         return block.data;
     }
-    LOG_INFO("getting free {} {} {} {}",blockIndex.x,blockIndex.y,blockIndex.z,blockIndex.w);
-    //2. if not cached, request data from provider
-    block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK,blockIndex);
-    //3. if sync wait for complete or async return immediately
+
+    BlockVolumeManagerImpl::MemoryBlock block;
+    {
+        std::lock_guard<std::mutex> lk(get_mtx);
+        block = impl->fetchMemoryBlock(BlockVolumeManagerImpl::Lock::READ_LOCK, blockIndex, true);
+        if (block.isValid())
+        {
+            impl->recordPtrForBlockIndex(block.data, blockIndex);
+            return block.data;
+        }
+        block = impl->getFreeMemoryBlock(BlockVolumeManagerImpl::Lock::WRITE_LOCK, blockIndex);
+    }
 
     START_TIMER
     provider->getVolumeBlock(block.data,blockIndex);
@@ -657,14 +697,19 @@ void *BlockVolumeManager::getVolumeBlockAndLock(const BlockIndex& blockIndex)
 }
 bool BlockVolumeManager::lock(void *ptr)
 {
+    std::lock_guard<std::mutex> lk(lock_mtx);
     auto block_index = impl->getBlockIndexWithPtr(ptr);
     if(block_index.isValid()){
 //        int ret = impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::READ_LOCK,block_index,true);
 //        return ret == 1;
+        LOG_DEBUG("before lock");
         bool e = impl->addMemoryBlockReadLock(block_index,BlockVolumeManagerImpl::Lock::READ_LOCK);
+        LOG_DEBUG("after lock");
+        if(!e) LOG_CRITICAL("lock fail");
         return e;
     }
     else{
+        LOG_CRITICAL("lock failed");
         return false;
     }
 }
@@ -674,6 +719,7 @@ void BlockVolumeManager::waitForLock(void *ptr)
 }
 bool BlockVolumeManager::unlock(void *ptr)
 {
+    std::lock_guard<std::mutex> lk(lock_mtx);
     auto block_index = impl->getBlockIndexWithPtr(ptr);
     if(block_index.isValid()){
 //        impl->changeMemoryBlockLock(BlockVolumeManagerImpl::Lock::NONE,block_index,true);
@@ -681,7 +727,7 @@ bool BlockVolumeManager::unlock(void *ptr)
         if(e){
             impl->erasePtrRecording(ptr);
         }
-        LOG_INFO("unlock free count {}",impl->free_mem_blocks.size());
+        LOG_INFO("unlock {} {} {} {}, free count {}",block_index.x,block_index.y,block_index.z,block_index.w,impl->free_mem_blocks.size());
         return true;
     }
     else{
@@ -697,6 +743,7 @@ void BlockVolumeManager::waitForUnlock(void *ptr)
     }
 }
 BlockVolumeManager::BlockVolumeManager()
+:thread_pool(16)
 {
     impl = std::make_unique<BlockVolumeManagerImpl>();
 }

@@ -37,9 +37,9 @@ void SliceHelper::UniformMergeSlice(const std::vector<SliceExt>& subSlices,std::
         int sy = slice.region.min_y;
         int dx = slice.region.max_x;
         int dy = slice.region.max_y;
-#pragma omp parallel for
-        for(int x = sx; x <= dx; x++){
-            for(int y = sy; y <= dy; y++){
+//#pragma omp parallel for
+        for(int y = sy; y <= dy; y++){
+            for(int x = sx; x <= dx; x++){
                 result(x,y) = (*img)(x,y);
             }
         }

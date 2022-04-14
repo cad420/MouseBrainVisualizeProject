@@ -545,6 +545,156 @@ void RunMultiThreadingRenderLoop(bool async)
 
     if (async)
     {
+        slice_render = [&]() -> const Image & {
+            static Image merge_color(window_w, window_h);
+
+            SliceExt sliceExt{slice, SliceHelper::GetSliceLod(slice),
+                              volume.getVoxel() * SliceHelper::SliceStepVoxelRatio, 0.f};
+            //进行Slice分割 使用最简单的均分
+            std::vector<SliceExt> sub_slices;
+            SliceHelper::UniformDivideSlice(sliceExt, slice_renderer_count, sub_slices);
+            for (int i = 0; i < sub_slices.size(); i++)
+            {
+                sub_slices[i].id = 100 + i;
+            }
+
+            auto slice_render_task = [&](const SliceExt &sub_slice, SliceRenderer *slice_renderer) -> const Image & {
+                int id = sub_slice.id;
+                FrustumExt view_frustum{};
+                SliceHelper::ExtractViewFrustumExtFromSliceExt(sub_slice, view_frustum, volume.getVoxel());
+
+                auto intersect_blocks = volume_block_tree.computeIntersectBlock(view_frustum, sub_slice.lod);
+//                LOG_INFO("slice render intersect block count: {}", intersect_blocks.size());
+//                for (auto &b : intersect_blocks)
+//                {
+//                    LOG_INFO("slice id: {},intersect block {} {} {} {}", sub_slice.id, b.x, b.y, b.z, b.w);
+//                }
+                std::vector<Volume::BlockIndex> missed_blocks;
+                std::vector<Renderer::PageTableItem> cur_renderer_page_table;
+                auto &page_table = gpu_resource.getPageTable();
+                page_table.acquireLock();
+
+                auto query_ret = page_table.queriesAndLockExt(intersect_blocks);
+                for (const auto &ret : query_ret)
+                {
+                    if (ret.cached)
+                    {
+                        cur_renderer_page_table.emplace_back(ret.entry, ret.value);
+                    }
+                    else
+                    {
+                        missed_blocks.emplace_back(ret.value);
+                    }
+                }
+//                LOG_INFO("first time missed blocks count: {}", missed_blocks.size());
+
+                //异步加载数据块 先查询缺失块是否已经加载到内存中
+                std::unordered_map<Volume::BlockIndex, void *> missed_block_buffer;
+                std::vector<Volume::BlockIndex> copy_missed_blocks;
+                copy_missed_blocks.swap(missed_blocks);
+                for (const auto &block : copy_missed_blocks)
+                {
+                    auto p = block_volume_manager.getVolumeBlock(block, false);
+                    if (p && block_volume_manager.lock(p))
+                    {
+                        missed_blocks.emplace_back(block);
+                    }
+                    else
+                    {
+                        p = nullptr;
+                    }
+                    missed_block_buffer[block] = p;
+                }
+//                LOG_INFO("{} second time missed block count: {}", id, missed_blocks.size());
+                auto missed_block_entries = page_table.getEntriesAndLock(missed_blocks);
+                page_table.acquireRelease();
+                assert(missed_block_entries.size() == missed_blocks.size());
+//                LOG_INFO("{} get entries",id);
+                std::unordered_map<Volume::BlockIndex, PageTable::EntryItem> block_entries;
+                missed_blocks.clear();
+                for (const auto &entry : missed_block_entries)
+                {
+                    if (!entry.cached)
+                    {
+                        missed_blocks.emplace_back(entry.value);
+                        block_entries[entry.value] = entry.entry;
+                    }
+                    else
+                    {
+                        block_volume_manager.unlock(missed_block_buffer[entry.value]);
+                        LOG_ERROR("unlock");
+                        missed_block_buffer[entry.value] = nullptr;
+                    }
+                    cur_renderer_page_table.emplace_back(entry.entry, entry.value);
+                }
+//                LOG_INFO("{} slice render missed block count: {}", id,missed_blocks.size());
+
+                auto thread_id = std::this_thread::get_id();
+                auto tid = std::hash<decltype(thread_id)>()(thread_id);
+
+                auto task = [&](int thread_idx, Volume::BlockIndex block_index) {
+                    auto p = missed_block_buffer[block_index];
+                    assert(p);
+                    if (!p)
+                        return;
+                    auto entry = block_entries[block_index];
+
+                    GPUResource::ResourceDesc desc{};
+                    desc.id = tid;
+                    desc.type = GPUResource::Texture;
+                    desc.width = volume.getBlockLength();
+                    desc.pitch = volume.getBlockLength();
+                    desc.height = volume.getBlockLength();
+                    desc.depth = volume.getBlockLength();
+                    desc.size = volume.getBlockSize();
+                    GPUResource::ResourceExtent extent{volume.getBlockLength(), volume.getBlockLength(),
+                                                       volume.getBlockLength()};
+                    auto ret = gpu_resource.uploadResource(desc, entry, extent, p, volume.getBlockSize(), false);
+                    assert(ret);
+//                    LOG_DEBUG("after upload");
+                    ret = block_volume_manager.unlock(p);
+                    assert(ret);
+//                    LOG_DEBUG("after unlock");
+                    page_table.update(block_index);
+//                    LOG_DEBUG("after update");
+                };
+                parallel_foreach(missed_blocks, task, missed_blocks.size());
+//                LOG_DEBUG("after task {}",id);
+                gpu_resource.flush(tid);
+//                LOG_DEBUG("after flush {}",id);
+
+                slice_renderer->updatePageTable(cur_renderer_page_table);
+//                LOG_DEBUG("after update page table {}",id);
+                slice_renderer->render(sliceExt, static_cast<SliceRenderer::RenderType>(sub_slice.id - 100));
+//                LOG_DEBUG("after render {}",id);
+                for (const auto &item : cur_renderer_page_table)
+                {
+                    page_table.release(item.second);
+                }
+//                LOG_DEBUG("after release {}",id);
+                return slice_renderer->getFrameBuffers().getColors();
+            };
+            std::vector<std::future<const Image &>> sub_images;
+            for (int i = 0; i < slice_renderer_count; i++)
+            {
+                sub_images.emplace_back(
+                    std::async(std::launch::async, slice_render_task, sub_slices[i], slice_renderers[i]));
+            }
+
+            std::vector<const Image *> sub_colors;
+            for (auto &r : sub_images)
+            {
+                sub_colors.emplace_back(&r.get());
+//                LOG_DEBUG("get future");
+            }
+//          LOG_DEBUG("before merge");
+//            START_TIMER
+            SliceHelper::UniformMergeSlice(sub_slices, sub_colors, merge_color);
+//            LOG_DEBUG("after merge");
+//            STOP_TIMER("merge slice")
+
+            return merge_color;
+        };
     }
     else
     {
@@ -638,7 +788,7 @@ void RunMultiThreadingRenderLoop(bool async)
 
                 slice_renderer->updatePageTable(cur_renderer_page_table);
                 LOG_DEBUG("after update page table");
-                slice_renderer->render(sliceExt, static_cast<SliceRenderer::RenderType>(sub_slice.id-100));
+                slice_renderer->render(sliceExt, static_cast<SliceRenderer::RenderType>(sub_slice.id - 100));
 
                 for (const auto &item : cur_renderer_page_table)
                 {
@@ -768,14 +918,14 @@ void RunMultiThreadingRenderLoop(bool async)
         last_t = SDL_GetTicks();
 
         process_input(exit, delta_t);
-        START_TIMER
+//        START_TIMER
         const auto &colors = slice_render();
-        STOP_TIMER("slice render")
-
+//        STOP_TIMER("slice render")
+//        LOG_DEBUG("after get colors");
         SDLDraw(colors);
 
         delta_t = SDL_GetTicks() - last_t;
-        std::cout << "delta_t: " << delta_t << std::endl;
+//        std::cout << "delta_t: " << delta_t << std::endl;
     }
 }
 

@@ -577,7 +577,7 @@ struct GPUResource::Impl{
 #endif
     }
     void flushStagingBufferAndRelease(size_t threadID){
-        START_TIMER
+//        START_TIMER
         std::vector<VkCommandBuffer> cmd;
         VkSubmitInfo submitInfo{};
         {
@@ -610,8 +610,8 @@ struct GPUResource::Impl{
             }
             thread_staging_buffers[threadID].clear();
         }
-        STOP_TIMER("flush staging buffer")
-        LOG_DEBUG("flush staging buffer to gpu texture");
+//        STOP_TIMER("flush staging buffer")
+//        LOG_DEBUG("flush staging buffer to gpu texture");
     }
     //internal
     void flushStagingBufferAndRelease(){
