@@ -31,14 +31,21 @@ class Renderer{
     enum Type:int{
         SLICE = 0,VOLUME=1
     };
-    virtual void setVolume(Volume)  = 0;
+
+    virtual ~Renderer() = default;
+
+    virtual void setVolume(const Volume&)  = 0;
+
+    virtual Type getRendererType() const = 0;
+
+    virtual const Framebuffer& getFrameBuffers() const = 0;
+
     //not necessary for slice render
-    virtual void setTransferFunction(TransferFunction) {};
+    virtual void setTransferFunction(const TransferFunction&) {};
+
     using PageTableItem = std::pair<PageTable::EntryItem,PageTable::ValueItem>;
     virtual void updatePageTable(const std::vector<PageTableItem>&){}
-    virtual Type getRendererType() const = 0;
-    virtual const Framebuffer& getFrameBuffers() const = 0;
-    virtual ~Renderer() = default;
+
 };
 
 /**
@@ -54,18 +61,20 @@ class SliceRenderer: public Renderer{
     static constexpr int MaxSliceW = 1920;
     static constexpr int MaxSliceH = 1080;
 
-    /**
-     * @param slice
-     * @note slice's image size is different for each render call with a high probability.
-     */
     virtual void render(const Slice& slice) = 0;
 
     enum RenderType:uint32_t{
         MIP = 0,
         RAYCAST = 1,
     };
-
+    /**
+     * @brief this function extend slice render method, slice may has depth
+     * can perform a raycast render.
+     * @note if choose caycast render type, called should set transfer function first,
+     * and raycast is not suitable for slice with large depth because of fixed lod policy.
+     */
     virtual void render(const SliceExt& slice,RenderType type){}
+
   protected:
     virtual ~SliceRenderer() = default;
 };
@@ -73,13 +82,22 @@ class SliceRenderer: public Renderer{
 
 class VolumeRenderer: public Renderer{
   public:
+    void setTransferFunction(const TransferFunction&) override = 0;
+
+    virtual void setTransferFunction(const TransferFunctionExt1D&){};
 
     virtual void render(const VolumeRendererCamera&) = 0;
 
+    /**
+     * @brief using for multi render passes out-of-core volume render.
+     * @param newFrame meanings whether this render pass should clear color and depth buffer
+     * and use the new passed camera to begin a framebuffer.
+     * @return whether out-of-core volume render is finished.
+     * @note to render a complete framebuffer this function should be called in one thread
+     * at same time until it return true.
+     */
     virtual bool renderPass(const VolumeRendererCamera&,bool newFrame){ return true;}
 
-    //todo change pure virtual to virtual
-    virtual void setTransferFunction(TransferFunctionExt1D) = 0;
   protected:
     virtual ~VolumeRenderer() = default;
 };

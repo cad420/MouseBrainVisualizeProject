@@ -11,12 +11,12 @@ namespace internal{
 class VulkanSliceRenderer:public SliceRenderer{
   public:
 
-    void setVolume(Volume) override;
+    void setVolume(const Volume&) override;
     Type getRendererType() const override;
     const Framebuffer& getFrameBuffers() const override;
     void render(const Slice&) override;
     void render(const SliceExt& slice,RenderType type) override;
-    void setTransferFunction(TransferFunction) override;
+    void setTransferFunction(const TransferFunction&) override;
     void updatePageTable(const std::vector<PageTableItem>&) override;
 
     static VulkanSliceRenderer* Create(VulkanNodeSharedResourceWrapper*);

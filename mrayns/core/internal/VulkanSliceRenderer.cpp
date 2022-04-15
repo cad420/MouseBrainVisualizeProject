@@ -1049,7 +1049,7 @@ void VulkanSliceRenderer::destroy()
 {
     impl->destroy();
 }
-void VulkanSliceRenderer::setVolume(Volume volume)
+void VulkanSliceRenderer::setVolume(const Volume& volume)
 {
     impl->setVolume(volume);
 }
@@ -1057,7 +1057,7 @@ void VulkanSliceRenderer::render(const SliceExt &slice, SliceRenderer::RenderTyp
 {
     impl->render(slice,type);
 }
-void VulkanSliceRenderer::setTransferFunction(TransferFunction tf)
+void VulkanSliceRenderer::setTransferFunction(const TransferFunction& tf)
 {
     TransferFunctionExt1D transferFunctionExt1D{tf};
     ::mrayns::ComputeTransferFunction1DExt(transferFunctionExt1D);

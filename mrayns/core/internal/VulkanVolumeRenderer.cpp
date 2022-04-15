@@ -4,6 +4,7 @@
 
 #include "VulkanVolumeRenderer.hpp"
 #include "../../common/Logger.hpp"
+#include "../../algorithm/ColorMapping.hpp"
 #include "../../geometry/Mesh.hpp"
 #include "../../utils/Timer.hpp"
 #include "../GPUResource.hpp"
@@ -447,7 +448,7 @@ struct VulkanVolumeRenderer::Impl{
 
     }
     //todo check if volume is same as prev
-    void setVolume(Volume volume){
+    void setVolume(const Volume& volume){
         //0. check if resource about this volume is cached
         //0.1 reload cached resource *(no need to cache)
         //0.2 create resource for the volume
@@ -467,7 +468,7 @@ struct VulkanVolumeRenderer::Impl{
 
 //        createRendererVKResPageTableBuffer();
     }
-    void setTransferFunction1D(float* data,int dim = 256,int length = 1024){
+    void setTransferFunction1D(const float* data,int dim = 256,int length = 1024){
         assert(dim == 256 && length == 1024);
         //create staging buffer
         VkBuffer stagingBuffer;
@@ -1865,17 +1866,23 @@ void VulkanVolumeRenderer::destroy()
 {
     impl->destroy();
 }
-void VulkanVolumeRenderer::setVolume(Volume volume)
+void VulkanVolumeRenderer::setVolume(const Volume& volume)
 {
     impl->setVolume(volume);
 }
-void VulkanVolumeRenderer::setTransferFunction(TransferFunctionExt1D tf)
+void VulkanVolumeRenderer::setTransferFunction(const TransferFunctionExt1D& tf)
 {
     impl->setTransferFunction1D(tf.tf,tf.TFDim,sizeof(tf.tf)/sizeof(float));
 }
 void VulkanVolumeRenderer::updatePageTable(const std::vector<PageTableItem>& items)
 {
     impl->updatePageTable(items);
+}
+void VulkanVolumeRenderer::setTransferFunction(const TransferFunction& tf)
+{
+    TransferFunctionExt1D tf_ext1d{tf};
+    ::mrayns::ComputeTransferFunction1DExt(tf_ext1d);
+    impl->setTransferFunction1D(tf_ext1d.tf,tf_ext1d.TFDim,sizeof(tf_ext1d.tf)/sizeof(float));
 }
 
 }//namespace internal

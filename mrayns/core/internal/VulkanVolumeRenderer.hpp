@@ -13,11 +13,12 @@ namespace internal{
 class VulkanVolumeRenderer:public VolumeRenderer{
   public:
 
-    void setVolume(Volume) override;
+    void setVolume(const Volume&) override;
     Type getRendererType() const override;
     const Framebuffer& getFrameBuffers() const override;
     void render(const VolumeRendererCamera&) override;
-    void setTransferFunction(TransferFunctionExt1D) override;
+    void setTransferFunction(const TransferFunction&) override;
+    void setTransferFunction(const TransferFunctionExt1D&) override;
     void updatePageTable(const std::vector<PageTableItem>&) override;
 
     static VulkanVolumeRenderer* Create(VulkanNodeSharedResourceWrapper*);

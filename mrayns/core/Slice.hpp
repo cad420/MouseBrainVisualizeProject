@@ -29,9 +29,9 @@ struct Slice{
 };
 
 struct SliceExt: public Slice{
-    int lod;
-    float step;
-    float depth = 0.f;
+    int lod;//this must compute by call defined function in the library
+    float step;//this should compute according to voxel
+    float depth = 0.f;//this should based on voxel
 };
 
 MRAYNS_END

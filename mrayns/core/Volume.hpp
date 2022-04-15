@@ -35,7 +35,7 @@ class Volume{
         }
     };
 
-    std::string getVolumeName() const {return name;}
+    const std::string& getVolumeName() const {return name;}
     int getBlockLength() const {return block_length;}
     int getBlockPadding() const {return padding;}
     int getBlockLengthWithoutPadding() const {return block_length - 2 * padding;}
