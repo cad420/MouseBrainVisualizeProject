@@ -40,7 +40,7 @@ class PageTable{
 
     //add new key
     //will throw exception if exists
-    void insert(EntryItem);
+    void insert(const EntryItem&);
 
     void clear();
 
@@ -55,12 +55,12 @@ class PageTable{
 
     //no lock
     //用于预先判断处理 包括write lock的项
-    bool query(ValueItem);
+    bool query(const ValueItem&);
 
     //查询ValueItem是否存储当中 如果存在则将其加锁并返回true 否则返回false
     //加了write lock的不能算存储了 因为它还没有上传
     //add read lock
-    bool queryAndLock(ValueItem);
+    bool queryAndLock(const ValueItem&);
 
     //add write lock
     //will wait
@@ -71,25 +71,25 @@ class PageTable{
         bool cached;
     };
 
-    EntryItemExt queryAndLockExt(ValueItem);
+    EntryItemExt queryAndLockExt(const ValueItem&);
 
     std::vector<EntryItemExt> queriesAndLockExt(const std::vector<ValueItem>& );
 
     bool queryCached(const ValueItem&);
 
-    EntryItemExt getEntryAndLock(ValueItem);
+    EntryItemExt getEntryAndLock(const ValueItem&);
 
     //get all entries the same time and lock all
     std::vector<EntryItemExt> getEntriesAndLock(const std::vector<ValueItem>& );
 
     //no need lock first
     //update ValueItem with write lock to read lock
-    void update(ValueItem);
+    void update(const ValueItem&);
 
     //no need lock first
     //release read or write lock
     //write -> cached but read may still be read locked
-    void release(ValueItem);
+    void release(const ValueItem&);
 
     //构造和析构函数都要见到Impl的完整定义
     PageTable();

@@ -40,7 +40,7 @@ struct PageTable::Impl{
             return q.size() + lru.get_size();
         }
         //无条件删除
-        bool popItem(Key key,Item& item){
+        bool popItem(const Key& key,Item& item){
             int size = q.size();
             bool find = false;
             while(size-- > 0){
@@ -69,7 +69,7 @@ struct PageTable::Impl{
         }
 
         //不会改变缓存优先级
-        bool query(Key key){
+        bool query(const Key& key){
             int size = q.size();
             bool find = false;
             while(size-- > 0){
@@ -85,7 +85,7 @@ struct PageTable::Impl{
             return res.has_value();
         }
         //带改变缓存优先级的查询
-        bool query(Key key,Value& value){
+        bool query(const Key& key,Value& value){
             int size = q.size();
             bool find = false;
             while(size-->0){
@@ -112,7 +112,7 @@ struct PageTable::Impl{
             }
         }
 
-        void appendItem(Item item){
+        void appendItem(const Item& item){
             //todo if check existed before append
 //            if(query(item.first,item.second)) return;
             q.push(item);
@@ -177,7 +177,7 @@ struct PageTable::Impl{
         void clear(){
             mq.clear();
         }
-        int getPriority(Key key){
+        int getPriority(const Key& key){
             assert(key.isValid());
             return std::clamp(key.w,MinP,MaxP);
         }
@@ -186,7 +186,7 @@ struct PageTable::Impl{
             return mq.find(p) != mq.end();
         }
         //会改变缓存优先级
-        bool query(Key key,Value& value){
+        bool query(const Key& key,Value& value){
             //查询从高优先级开始
             for(int i = MaxP;i>=MinP;--i){
                 auto res = mq[i].query(key,value);
@@ -196,7 +196,7 @@ struct PageTable::Impl{
         }
 
         //不会改变缓存优先级
-        bool query(Key key){
+        bool query(const Key& key){
             //查询从高优先级开始
             for(int i = MaxP;i>=MinP;--i){
                 auto res = mq[i].query(key);
@@ -204,7 +204,7 @@ struct PageTable::Impl{
             }
             return false;
         }
-        bool popItem(Key key,Item& item){
+        bool popItem(const Key& key,Item& item){
             //删除时从低优先级开始
             for(int i = MinP ;i<=MaxP;++i){
                 auto res = mq[i].popItem(key,item);
@@ -212,7 +212,7 @@ struct PageTable::Impl{
             }
             return false;
         }
-        void appendItem(Item item,int p){
+        void appendItem(const Item& item,int p){
             if(p<MinP || p>MaxP){
                 LOG_ERROR("invalid priority");
                 return;
@@ -227,7 +227,7 @@ struct PageTable::Impl{
             }
         }
         //todo if full?
-        void appendItem(Item item){
+        void appendItem(const Item& item){
             int p = getPriority(item.first);
             appendItem(item,p);
         }
@@ -271,7 +271,7 @@ struct PageTable::Impl{
         acquire_mtx.unlock();
     }
     //internal
-    CacheStatus queryValueItemStatus(ValueItem value)
+    CacheStatus queryValueItemStatus(const ValueItem& value)
     {
         {
             std::lock_guard<std::mutex> lk(cache_mtx);
@@ -298,12 +298,12 @@ struct PageTable::Impl{
         return UnCached;
     }
 
-    bool query(ValueItem value){
+    bool query(const ValueItem& value){
         auto status = queryValueItemStatus(value);
         return status == Cached || status == ReadLocked || status == WriteLocked;
     }
 
-    bool insertEntryItem(EntryItem entry){
+    bool insertEntryItem(const EntryItem& entry){
         if(exist_entries.find(entry)!=exist_entries.end()){
             return false;
         }
@@ -322,7 +322,7 @@ struct PageTable::Impl{
         page_table.cached_items.clear();
     }
 
-    void releaseLockedItem(ValueItem value){
+    void releaseLockedItem(const ValueItem& value){
         auto status = queryValueItemStatus(value);
         if(status == ReadLocked){
 //            moveItem(value,ReadLocked,Cached);
@@ -337,14 +337,14 @@ struct PageTable::Impl{
     }
     //write lock to read lock
     //otherwise not current write lock will return false
-    void downLockedItem(ValueItem value){
+    void downLockedItem(const ValueItem& value){
         auto status = queryValueItemStatus(value);
         if(status!=WriteLocked) return;
         moveItem(value,WriteLocked,ReadLocked);
     }
 
 
-    bool popFromReadLock(ValueItem value,LockItem& lockItem){
+    bool popFromReadLock(const ValueItem& value,LockItem& lockItem){
         std::lock_guard<std::mutex> lk(read_mtx);
         for(auto it = page_table.read_locked_items.begin();it!=page_table.read_locked_items.end();it++){
             if(it->first.second == value){
@@ -355,7 +355,7 @@ struct PageTable::Impl{
         }
         return false;
     }
-    bool popFromWriteLock(ValueItem value,LockItem& lockItem){
+    bool popFromWriteLock(const ValueItem& value,LockItem& lockItem){
         std::lock_guard<std::mutex> lk(write_mtx);
         for(auto it = page_table.write_locked_items.begin();it!=page_table.write_locked_items.end();it++){
             if(it->second == value){
@@ -366,22 +366,22 @@ struct PageTable::Impl{
         }
         return false;
     }
-    bool popFromCache(ValueItem value,CacheItem& item){
+    bool popFromCache(const ValueItem& value,CacheItem& item){
         std::lock_guard<std::mutex> lk(cache_mtx);
         return page_table.cached_items.popItem(value,item);
     }
-    void pushToReadLock(LockItem lockItem){
+    void pushToReadLock(const LockItem& lockItem){
         assert(queryValueItemStatus(lockItem.second)!=ReadLocked);
         std::lock_guard<std::mutex> lk(read_mtx);
         page_table.read_locked_items.emplace_back(lockItem,1);
         read_cv.notify_all();
     }
-    void pushToWriteLock(LockItem lockItem){
+    void pushToWriteLock(const LockItem& lockItem){
 //        assert(queryValueItemStatus(lockItem.second)!=WriteLocked);
         std::lock_guard<std::mutex> lk(write_mtx);
         page_table.write_locked_items.emplace_back(lockItem);
     }
-    void pushToCache(CacheItem item){
+    void pushToCache(const CacheItem& item){
         std::lock_guard<std::mutex> lk(cache_mtx);
 
         page_table.cached_items.appendItem(item);
@@ -391,7 +391,7 @@ struct PageTable::Impl{
 
     //只要找到 那么就无条件地移动
     //only for items in cached, read locked or write locked but not for free entries
-    void moveItem(ValueItem value,CacheStatus from,CacheStatus to){
+    void moveItem(const ValueItem& value,CacheStatus from,CacheStatus to){
         assert(queryValueItemStatus(value) == from);
         assert(to != UnExist && to!= UnCached);
         assert(from != UnExist && from!= UnCached);
@@ -437,7 +437,7 @@ struct PageTable::Impl{
     //internal
     //add lock for item already in the read_lock_items
     //if not exist return false else add read lock count and return true
-    bool addReadLockForExisted(ValueItem value){
+    bool addReadLockForExisted(const ValueItem& value){
         std::lock_guard<std::mutex> lk(read_mtx);
         for(auto& item:page_table.read_locked_items){
             if(item.first.second == value){
@@ -448,7 +448,7 @@ struct PageTable::Impl{
         }
         return false;
     }
-    bool decreaseReadLockForExisted(ValueItem value){
+    bool decreaseReadLockForExisted(const ValueItem& value){
         bool move = false;
         {
             std::lock_guard<std::mutex> lk(read_mtx);
@@ -477,7 +477,7 @@ struct PageTable::Impl{
         else return false;
     }
 
-    bool queryItemAndReadLock(ValueItem value){
+    bool queryItemAndReadLock(const ValueItem& value){
         auto status = queryValueItemStatus(value);
         if(status==ReadLocked){
             addReadLockForExisted(value);
@@ -650,7 +650,7 @@ struct PageTable::Impl{
 
 };
 
-void PageTable::insert(EntryItem entry)
+void PageTable::insert(const EntryItem& entry)
 {
 
     bool res = impl->insertEntryItem(entry);
@@ -682,16 +682,16 @@ void PageTable::acquireRelease()
     impl->unlockCacheTable();
     locked_id = 0;
 }
-bool PageTable::query(ValueItem value)
+bool PageTable::query(const ValueItem& value)
 {
     return impl->query(value);
 }
-bool PageTable::queryAndLock(ValueItem value)
+bool PageTable::queryAndLock(const ValueItem& value)
 {
     assert(IsAcquireLocked());
     return impl->queryItemAndReadLock(value);
 }
-PageTable::EntryItemExt PageTable::getEntryAndLock(ValueItem value)
+PageTable::EntryItemExt PageTable::getEntryAndLock(const ValueItem& value)
 {
     return getEntriesAndLock({value}).front();
 }
@@ -701,12 +701,12 @@ std::vector<PageTable::EntryItemExt> PageTable::getEntriesAndLock(const std::vec
     return impl->getEntriesAndWriteLock(values);
 }
 //no locked
-void PageTable::update(ValueItem value)
+void PageTable::update(const ValueItem& value)
 {
     impl->downLockedItem(value);
 }
 //no locked
-void PageTable::release(ValueItem value)
+void PageTable::release(const ValueItem& value)
 {
     impl->releaseLockedItem(value);
 }
@@ -718,7 +718,7 @@ PageTable::PageTable()
 {
     impl = std::make_unique<Impl>();
 }
-PageTable::EntryItemExt PageTable::queryAndLockExt(ValueItem value)
+PageTable::EntryItemExt PageTable::queryAndLockExt(const ValueItem& value)
 {
     assert(IsAcquireLocked());
     return queriesAndLockExt({value}).front();
