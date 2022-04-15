@@ -153,7 +153,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     std::mutex buffer_mtx;
 
 
-    bool recordPtrForBlockIndex(void* ptr,BlockIndex index){
+    bool recordPtrForBlockIndex(void* ptr,const BlockIndex& index){
         std::lock_guard<std::mutex> lk(buffer_mtx);
         buffer_map[ptr] = index;
         return true;
@@ -210,7 +210,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     // 如果free_mem_blocks是空的 则返回一个非法的MemoryBlock
     //否则 一定会返回一个MemoryBlock 但是其原来可能存储着数据
     //locked_mem_blocks里的数据无法被获取
-    MemoryBlock getFreeMemoryBlock(Lock::Type lockType,BlockIndex index){
+    MemoryBlock getFreeMemoryBlock(Lock::Type lockType,const BlockIndex& index){
         int read_count = 0;
         {
             std::lock_guard<std::mutex> lk(locked_mtx);
@@ -251,7 +251,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         locked_mem_blocks.push_back(mem);
         return mem.memory_block;
     }
-    void releaseMemoryBlockLock(BlockIndex index){
+    void releaseMemoryBlockLock(const BlockIndex& index){
         changeMemoryBlockLock(Lock::NONE,index);
     }
     //if change lock type force will always successfully while no force may failed
@@ -262,7 +262,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
      * @return -1 represent not find the memory block,
      * 0 represent failed and 1 represent successfully
      */
-    int changeMemoryBlockLock(Lock::Type dstType,BlockIndex index,bool force = false){
+    int changeMemoryBlockLock(Lock::Type dstType,const BlockIndex& index,bool force = false){
 
         //memory block in free
         {
@@ -359,7 +359,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         loading_cv.notify_all();
     }
     //internal
-    MemoryBlockDesc queryMemoryBlockFromFree(BlockIndex index){
+    MemoryBlockDesc queryMemoryBlockFromFree(const BlockIndex& index){
         decltype(free_mem_blocks) pq;
         MemoryBlockDesc ret{};
         while(!free_mem_blocks.empty()){
@@ -376,12 +376,12 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
 
     }
     //internal
-    MemoryBlockDesc queryMemoryBlockFromLocked(BlockIndex index){
+    MemoryBlockDesc queryMemoryBlockFromLocked(const BlockIndex& index){
         auto p =_queryMemoryBlockFromLocked(index);
         if(p) return *p;
         else return MemoryBlockDesc{};
     }
-    MemoryBlockDesc* _queryMemoryBlockFromLocked(BlockIndex index){
+    MemoryBlockDesc* _queryMemoryBlockFromLocked(const BlockIndex& index){
         MemoryBlockDesc* ret = nullptr;
         for(auto& mem:locked_mem_blocks){
             if(mem.index== index){
@@ -391,7 +391,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         return ret;
     }
 
-    bool isBlockMemoryWriting(BlockIndex index){
+    bool isBlockMemoryWriting(const BlockIndex& index){
         auto ret = queryMemoryBlockFromLocked(index);
         return ret.isLoaded() && ret.lock.isWriteLocked();
     }
@@ -399,7 +399,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     //如果没找到或者无法加锁 则返回一个非法的MemoryBlock
     //internal的函数是private的 一般不需要加锁 只需要在调用它们的public函数里加锁就行
 
-    bool addMemoryBlockReadLock(BlockIndex index,Lock::Type type){
+    bool addMemoryBlockReadLock(const BlockIndex& index,Lock::Type type){
         if(type != Lock::READ_LOCK) return false;
         {
             std::unique_lock<std::mutex> free_lk(free_mtx);
@@ -427,7 +427,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         }
         return false;
     }
-    bool reduceMemoryReadBlockLock(BlockIndex index,Lock::Type type){
+    bool reduceMemoryReadBlockLock(const BlockIndex& index,Lock::Type type){
         if(type != Lock::READ_LOCK) return false;
         {
 
@@ -460,7 +460,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
             }
         }
     }
-    MemoryBlock fetchMemoryBlock(Lock::Type lockType,BlockIndex index,bool wait = false){
+    MemoryBlock fetchMemoryBlock(Lock::Type lockType,const BlockIndex& index,bool wait = false){
         //优先从locked_mem_blocks中查找
         {
             std::unique_lock<std::mutex> lk(locked_mtx);
@@ -502,12 +502,12 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
         return MemoryBlock{};
     }
     //internal
-    MemoryBlockDesc fetchMemoryBlockFromLocked(Lock::Type lockType,BlockIndex index){
+    MemoryBlockDesc fetchMemoryBlockFromLocked(Lock::Type lockType,const BlockIndex& index){
         auto p = _fetchMemoryBlockFromLocked(lockType,index);
         if(p) return *p;
         else return MemoryBlockDesc{};
     }
-    MemoryBlockDesc* _fetchMemoryBlockFromLocked(Lock::Type lockType,BlockIndex index){
+    MemoryBlockDesc* _fetchMemoryBlockFromLocked(Lock::Type lockType,const BlockIndex& index){
 //        std::lock_guard<std::mutex> lk(locked_mtx);
         for(auto& mem:locked_mem_blocks){
             if(mem.index == index){
@@ -536,7 +536,7 @@ struct BlockVolumeManager::BlockVolumeManagerImpl{
     }
     //internal
 
-    MemoryBlock fetchMemoryBlockFromFree(Lock::Type lockType,BlockIndex index){
+    MemoryBlock fetchMemoryBlockFromFree(Lock::Type lockType,const BlockIndex& index){
         decltype(free_mem_blocks) pq;
         MemoryBlock ret{};
         while(!free_mem_blocks.empty()){
@@ -755,7 +755,7 @@ void BlockVolumeManager::destroy()
 {
 
 }
-bool BlockVolumeManager::query(const BlockVolumeManager::BlockIndex &blockIndex)
+bool BlockVolumeManager::query(const BlockIndex &blockIndex)
 {
     return false;
 }
