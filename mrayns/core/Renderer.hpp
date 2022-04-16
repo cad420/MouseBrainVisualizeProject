@@ -29,7 +29,7 @@ struct TransferFunctionExt1D: public TransferFunction{
 class Renderer{
   public:
     enum Type:int{
-        SLICE = 0,VOLUME=1
+        SLICE = 0,VOLUME=1,VOLUME_EXT=2
     };
 
     virtual ~Renderer() = default;
@@ -88,6 +88,12 @@ class VolumeRenderer: public Renderer{
 
     virtual void render(const VolumeRendererCamera&) = 0;
 
+  protected:
+    virtual ~VolumeRenderer() = default;
+};
+
+class VolumeRendererExt: public VolumeRenderer{
+  public:
     /**
      * @brief using for multi render passes out-of-core volume render.
      * @param newFrame meanings whether this render pass should clear color and depth buffer
@@ -96,29 +102,37 @@ class VolumeRenderer: public Renderer{
      * @note to render a complete framebuffer this function should be called in one thread
      * at same time until it return true.
      */
-    virtual bool renderPass(const VolumeRendererCamera&,bool newFrame){ return true;}
+    virtual bool renderPass(const VolumeRendererCamera&,bool newFrame) = 0;
+
+    /**
+     * @brief this will always clear color and depth buffer and render new framebuffer,
+     * it will also start a new volume render pipeline and finish it, so it may not render completely
+     * because volume data are not loaded.
+     * @note equals to call renderPass(camera,true).
+     */
+    void render(const VolumeRendererCamera&) override = 0;
 
   protected:
-    virtual ~VolumeRenderer() = default;
+   virtual ~VolumeRendererExt() = default;
 };
 
 
 template <Renderer::Type type>
 struct RendererCaster;
 
+#define DEFINE_RENDERER_CASTER(name, value)                                                                            \
+    template <> struct RendererCaster<value>                                                                           \
+    {                                                                                                                  \
+        static name *GetPtr(Renderer *p)                                                                               \
+        {                                                                                                              \
+            return dynamic_cast<name *>(p);                                                                            \
+        }                                                                                                              \
+    };
 
-template <>
-struct RendererCaster<Renderer::SLICE>{
-    static SliceRenderer* GetPtr(Renderer* p){
-        return dynamic_cast<SliceRenderer*>(p);
-    }
-};
+DEFINE_RENDERER_CASTER(SliceRenderer,Renderer::SLICE)
 
-template <>
-struct RendererCaster<Renderer::VOLUME>{
-    static VolumeRenderer* GetPtr(Renderer* p){
-        return dynamic_cast<VolumeRenderer*>(p);
-    }
-};
+DEFINE_RENDERER_CASTER(VolumeRenderer,Renderer::VOLUME)
+
+DEFINE_RENDERER_CASTER(VolumeRendererExt,Renderer::VOLUME_EXT)
 
 MRAYNS_END

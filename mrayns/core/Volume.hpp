@@ -33,6 +33,29 @@ class Volume{
         bool operator==(const BlockIndex& b) const{
             return x==b.x && y==b.y && z==b.z && w==b.w;
         }
+        BlockIndex(int x,int y,int z,int w)
+        :x(x),y(y),z(z),w(w)
+        {}
+        BlockIndex()
+        :x(-1),y(-1),z(-1),w(-1)
+        {}
+        bool operator<(const BlockIndex& b) const{
+            if(!b.isValid()) return true;
+            if(w == b.w){
+                if(z == b.z){
+                    if(y == b.y){
+                        return x < b.x;
+                    }
+                    else{
+                        return y < b.y;
+                    }
+                }
+                return z < b.z;
+            }
+            else{
+                return w < b.w;
+            }
+        }
     };
 
     const std::string& getVolumeName() const {return name;}

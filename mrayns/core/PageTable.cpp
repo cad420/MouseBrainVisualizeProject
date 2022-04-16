@@ -270,6 +270,9 @@ struct PageTable::Impl{
     void unlockCacheTable(){
         acquire_mtx.unlock();
     }
+    int getCacheCount(){
+        return page_table.cached_items.size() + page_table.free_entries.size();
+    }
     //internal
     CacheStatus queryValueItemStatus(const ValueItem& value)
     {
@@ -726,6 +729,10 @@ PageTable::EntryItemExt PageTable::queryAndLockExt(const ValueItem& value)
 std::vector<PageTable::EntryItemExt> PageTable::queriesAndLockExt(const std::vector<ValueItem>& values)
 {
     return impl->queryItemsAndReadLock(values);
+}
+int PageTable::getAvailableCount()
+{
+    return 0;
 }
 
 MRAYNS_END

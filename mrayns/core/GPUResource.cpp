@@ -9,6 +9,7 @@
 #include <set>
 #include "internal/VulkanVolumeRenderer.hpp"
 #include "internal/VulkanSliceRenderer.hpp"
+#include "internal/VulkanVolumeRendererExt.hpp"
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -39,6 +40,9 @@ class VulkanRendererDeleter
         else if (renderer->getRendererType() == Renderer::SLICE)
         {
             dynamic_cast<VulkanSliceRenderer *>(renderer)->destroy();
+        }
+        else if(renderer->getRendererType() == Renderer::VOLUME_EXT){
+            dynamic_cast<VulkanVolumeRendererExt *>(renderer)->destroy();
         }
     }
 };

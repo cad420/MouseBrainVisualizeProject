@@ -1,8 +1,7 @@
 //
-// Created by wyz on 2022/3/3.
+// Created by wyz on 2022/4/15.
 //
-
-#include "VulkanVolumeRenderer.hpp"
+#include "VulkanVolumeRendererExt.hpp"
 #include "../../common/Logger.hpp"
 #include "../../algorithm/ColorMapping.hpp"
 #include "../../geometry/Mesh.hpp"
@@ -12,66 +11,39 @@
 #include "../../Config.hpp"
 #include "../../algorithm/GeometryHelper.hpp"
 #include "Common.hpp"
-#ifdef DEBUG_WINDOW
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-#endif
-MRAYNS_BEGIN
 
+MRAYNS_BEGIN
 namespace internal{
 
-/*
- *                y
- *                |
- *               E|________F
- *              / |      / |
- *             /  | O   /  |
- *           H/___|_*__/G  |
- *            |   |___ |___|______x
- *            |  / A   |  /B
- *            | /      | /
- *            |/_______|/
- *            /D        C
- *           /
- *          z
- *
- * A:0  B:1  C:2  D:3
- * E:4  F:5  G:6  H:7
- */
 
-struct VolumeRendererVulkanSharedResourceWrapper:public VulkanRendererResourceWrapper
-{
+struct VolumeRendererExtVulkanSharedResourceWrapper: public VulkanRendererResourceWrapper{
     VkDescriptorSetLayout rayPosLayout{};
     VkDescriptorSetLayout rayCastLayout{};
 
-
-    VkRenderPass renderPass{};
+    VkRenderPass firstRenderPass{};//begin a new frame
+    VkRenderPass secondRenderPass{};//continue render a frame
 
     struct{
         VkPipelineLayout rayPos;
         VkPipelineLayout rayCast;
     }pipelineLayout{};
-    //https://stackoverflow.com/questions/51507986/are-vulkan-renderpasses-thread-local-in-multi-threading-rendering
-     struct{
-         VkPipeline rayPos;
-         VkPipeline rayCast;
-     }pipeline{};
 
-     static constexpr VkFormat rayEntryImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
-     static constexpr VkFormat rayExitImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
-     static constexpr VkFormat depthImageFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
-     static constexpr VkFormat colorImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    struct{
+        VkPipeline rayPos;
+        VkPipeline rayCast;
+    }pipeline{};
+
+    static constexpr VkFormat rayEntryImageFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+    static constexpr VkFormat rayExitImageFormat  = VK_FORMAT_R32G32B32A32_SFLOAT;
+    static constexpr VkFormat depthImageFormat    = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    static constexpr VkFormat colorImageFormat    = VK_FORMAT_R8G8B8A8_UNORM;
 };
 
-struct VolumeRendererVulkanPrivateResourceWrapper{
-    //private resource
-    //only for the renderer instance not shared with the same type renderer
+struct VolumeRendererExtVulkanPrivateResourceWrapper{
     struct {
         VkDescriptorSet raypos;
         VkDescriptorSet raycast;
     }descriptorSet;
-
-    //depth and color image mem alloc use default because they're not changed since created
 
     FramebufferAttachment rayEntryAttachment;
     FramebufferAttachment rayExitAttachment;
@@ -90,13 +62,12 @@ struct VolumeRendererVulkanPrivateResourceWrapper{
     }result_color;
 
     struct{
-       VkImage image;
-       VkImageView view;
-       VkDeviceMemory mem;
-       VkSampler sampler;
+        VkImage image;
+        VkImageView view;
+        VkDeviceMemory mem;
+        VkSampler sampler;
     }tf;
 
-    //uniform use host visible and coherent memory
     struct UBO{
         VkBuffer buffer;
 #ifdef DEBUG_WINDOW
@@ -105,6 +76,16 @@ struct VolumeRendererVulkanPrivateResourceWrapper{
         VmaAllocation allocation;
 #endif
     };
+    struct SSBO{
+        VkBuffer buffer;
+#ifdef DEBUG_WINDOW
+        VkDeviceMemory mem;
+#else
+        VmaAllocation allocation;
+#endif
+        void* mapped_ptr;
+        size_t size;
+    };
 
     UBO mvpMatrixUBO;
     UBO viewPosUBO;
@@ -112,29 +93,16 @@ struct VolumeRendererVulkanPrivateResourceWrapper{
     UBO volumeInfoUBO;
     UBO renderInfoUBO;
 
+    SSBO renderPassTagSSBO;
 
+    VkFramebuffer firstFramebuffer;
+    VkFramebuffer secondFramebuffer;
 
-    VkFramebuffer framebuffer;
-
-//    VkCommandBuffer tfTransitionCmd;
-//    VkCommandBuffer tfCopyCmd;
-
-    VkCommandBuffer drawCommand;
+    VkCommandBuffer firstDrawCommand;
+    VkCommandBuffer secondDrawCommand;
     VkCommandBuffer resultCopyCommand;
 
-    //not thread-safe
-    VmaAllocator allocator;//for mapping table buffer
-
-    /*
-     * https://www.rastergrid.com/blog/2010/01/uniform-buffers-vs-texture-buffers/
-     * use shader storage buffer or texture buffer is expensive for memory size use and it depends on the data itself
-     * so instead of alloc entire page table items, use hash table is a better choice
-    struct{
-        VkBuffer buffer;
-        VmaAllocation allocation;
-        size_t size;
-    }pageTableSBO;
-    */
+    VmaAllocator allocator;
 
     UBO pageTableUBO;
 
@@ -152,13 +120,11 @@ struct VolumeRendererVulkanPrivateResourceWrapper{
         VmaAllocation indexAllocation;
 #endif
     }proxyCubeBuffer;
-
-
 };
-//renderer是被单线程调用的 所以不需要考虑加锁
-struct VulkanVolumeRenderer::Impl{
-    std::unique_ptr<VolumeRendererVulkanPrivateResourceWrapper> renderer_vk_res;
-    VolumeRendererVulkanSharedResourceWrapper* shared_renderer_vk_res;
+
+struct VulkanVolumeRendererExt::Impl{
+    std::unique_ptr<VolumeRendererExtVulkanPrivateResourceWrapper> renderer_vk_res;
+    VolumeRendererExtVulkanSharedResourceWrapper* shared_renderer_vk_res;
     VulkanNodeSharedResourceWrapper* node_vk_res;
     Framebuffer render_result;
     Volume volume;
@@ -167,6 +133,9 @@ struct VulkanVolumeRenderer::Impl{
         Matrix4f model = Matrix4f(1.f);
     }matrix_transform;
     Vector4f view_pos;
+    struct RenderPassTag{
+        uint32_t finished; uint32_t padding[3];
+    }renderPass_tag;
     static constexpr int MaxVolumeLod = 12;
     struct VolumeInfo{
         Vector4ui volume_dim;//x y z max_lod
@@ -182,13 +151,8 @@ struct VulkanVolumeRenderer::Impl{
         Vector4f inv_texture_shape[GPUResource::DefaultMaxGPUTextureCount] = {Vector4f{0.f}};
     } volume_info;
     void* result_color_mapped_ptr = nullptr;
-    /**
-     * everytime after setting new volume should re-create it
-     * everytime setting page table should memset zero first
-     */
     using HashTable = ::mrayns::internal::MappingTable::HashTable;
     HashTable page_table;
-
     struct RenderInfo{
         Vector3f view_pos;
         float ray_dist;
@@ -207,6 +171,7 @@ struct VulkanVolumeRenderer::Impl{
             6,5,4, 6,4,7
         };
     } proxy_cube;
+
 #ifdef DEBUG_WINDOW
     struct Debug{
         int window_w,window_h;
@@ -337,134 +302,20 @@ struct VulkanVolumeRenderer::Impl{
     }debug;
 #endif
 
-    void render(const VolumeRendererCamera& camera){
-        //0. check renderer resource
-
-        //1. resize Framebuffer
-        START_TIMER
-        updateRenderParamsUBO(camera);
-
-
-        //submit draw commands to queue
-        VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &renderer_vk_res->drawCommand;
-        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        VkFence fence;
-        {
-            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
-            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
-            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
-        }
-        VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
-        {
-            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
-            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
-        }
-        STOP_TIMER("vulkan render")
-
-#ifdef DEBUG_WINDOW
-        debug.submit(shared_renderer_vk_res->shared_graphics_queue);
-#endif
-
-    }
-    void updateRenderParamsUBO(const VolumeRendererCamera& camera){
-        //params for ray pos
-        view_pos = vec4(camera.position,Contain(BoundBox{{0.f,0.f,0.f},{volume.getVolumeSpace() * volume.getVolumeDim()}},camera.position));
-        matrix_transform.model = Matrix4f(1.f);
-        auto view = GeometryHelper::ExtractViewMatrixFromCamera(camera);
-        //todo
-        auto proj = perspective(radians(camera.fov*0.5f),static_cast<float>(camera.width)/static_cast<float>(camera.height),0.1f,20.f);
-        matrix_transform.mvp = proj * view * matrix_transform.model;
-        uploadRayPosUBO();
-
-        render_info.ray_step = camera.raycasting_step;
-        render_info.ray_dist = camera.raycasting_max_dist;
-        render_info.view_pos = camera.position;
-        for(int i = 0; i < camera.lod_dist.MaxLod;i++){
-            render_info.lod_dist[i] = Vector4f(camera.lod_dist.lod_dist[i]);
-        }
-        uploadRenderParamsUBO();
-    }
-    void uploadRayPosUBO(){
-        //ray pos
-        {
-            void *data;
-            size_t size = sizeof(matrix_transform);
-#ifdef DEBUG_WINDOW
-            vkMapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->mvpMatrixUBO.mem, 0, size, 0, &data);
-            memcpy(data, &matrix_transform, size);
-            vkUnmapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->mvpMatrixUBO.mem);
-#else
-            VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->mvpMatrixUBO.allocation,&data));
-            memcpy(data,&matrix_transform,size);
-            vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->mvpMatrixUBO.allocation);
-#endif
-        }
-        //ray cast
-        {
-            void *data;
-            size_t size = sizeof(view_pos);
-#ifdef DEBUG_WINDOW
-            vkMapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->viewPosUBO.mem, 0, size, 0, &data);
-            memcpy(data, &view_pos, size);
-            vkUnmapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->viewPosUBO.mem);
-#else
-            VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->viewPosUBO.allocation,&data));
-            memcpy(data,&view_pos,size);
-            vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->viewPosUBO.allocation);
-#endif
-        }
-    }
-    const Framebuffer& getFrameRenderResult(){
-        START_TIMER
-        VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &renderer_vk_res->resultCopyCommand;
-        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-        VkFence fence;
-        {
-            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
-            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
-            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue, 1, &submitInfo, fence));
-        }
-        VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
-        {
-            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
-            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
-        }
-
-        ::memcpy(render_result.getColors().data(),result_color_mapped_ptr,render_result.getColors().size());
-
-//        vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->resultColor.mem);
-
-        STOP_TIMER("get render result")
-        return render_result;
-    }
 
     void destroy(){
 
     }
-    //todo check if volume is same as prev
     void setVolume(const Volume& volume){
-        //0. check if resource about this volume is cached
-        //0.1 reload cached resource *(no need to cache)
-        //0.2 create resource for the volume
         if(!volume.isValid()){
             LOG_ERROR("invalid volume");
             return;
         }
         this->volume = volume;
-        //0.2.1 update volume info buffer and upload
+
         updateVolumeInfo();
 
-        //0.2.2* update proxy cube buffer and upload
         updateProxyCube();
-
-
-        //0.2.3 create page table buffer and upload *no need to create if using hash table implement for page table
-
-//        createRendererVKResPageTableBuffer();
     }
     void setTransferFunction1D(const float* data,int dim = 256,int length = 1024){
         assert(dim == 256 && length == 1024);
@@ -524,7 +375,167 @@ struct VulkanVolumeRenderer::Impl{
 #endif
         LOG_INFO("successfully upload transfer function");
     }
+    void updatePageTable(const std::vector<PageTableItem>& items){
+        page_table.clear();
+        for(const auto& item:items){
+            page_table.append({item.second,item.first});
+        }
 
+        uploadPageTable();
+    }
+    bool renderPass(const VolumeRendererCamera& camera,bool newFrame){
+        //submit draw command
+        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fence;
+        VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submitInfo.commandBufferCount = 1;
+        if(newFrame){
+            updateRenderParamsUBO(camera);
+            submitInfo.pCommandBuffers = &renderer_vk_res->firstDrawCommand;
+        }
+        else{
+            submitInfo.pCommandBuffers = &renderer_vk_res->secondDrawCommand;
+        }
+
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
+            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue,1,&submitInfo,fence));
+        }
+        VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
+        }
+        //new frame should call once more again
+        if(newFrame){
+            return renderPass(camera,false);
+        }
+        //get render pass tag, required host coherent
+        auto tag = reinterpret_cast<uint32_t*>(renderer_vk_res->renderPassTagSSBO.mapped_ptr)[0];
+        return tag == 0;
+    }
+    const Framebuffer& getFrameRenderResult(){
+        VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &renderer_vk_res->resultCopyCommand;
+        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fence;
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            VK_EXPR(vkCreateFence(shared_renderer_vk_res->shared_device, &fenceInfo, nullptr, &fence));
+            VK_EXPR(vkQueueSubmit(shared_renderer_vk_res->shared_graphics_queue, 1, &submitInfo, fence));
+        }
+        VK_EXPR(vkWaitForFences(shared_renderer_vk_res->shared_device,1,&fence,VK_TRUE,UINT64_MAX));
+        {
+            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+            vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
+        }
+
+        ::memcpy(render_result.getColors().data(),result_color_mapped_ptr,render_result.getColors().size());
+
+        return render_result;
+    }
+
+    void updateRenderParamsUBO(const VolumeRendererCamera& camera){
+        //params for ray pos
+        view_pos = vec4(camera.position,Contain(BoundBox{{0.f,0.f,0.f},{volume.getVolumeSpace() * volume.getVolumeDim()}},camera.position));
+        matrix_transform.model = Matrix4f(1.f);
+        auto view = GeometryHelper::ExtractViewMatrixFromCamera(camera);
+        //todo
+        auto proj = perspective(radians(camera.fov*0.5f),static_cast<float>(camera.width)/static_cast<float>(camera.height),0.1f,20.f);
+        matrix_transform.mvp = proj * view * matrix_transform.model;
+        uploadRayPosUBO();
+
+        render_info.ray_step = camera.raycasting_step;
+        render_info.ray_dist = camera.raycasting_max_dist;
+        render_info.view_pos = camera.position;
+        for(int i = 0; i < camera.lod_dist.MaxLod;i++){
+            render_info.lod_dist[i] = Vector4f(camera.lod_dist.lod_dist[i]);
+        }
+        uploadRenderParamsUBO();
+    }
+    void uploadRayPosUBO(){
+        //ray pos
+        {
+            void *data;
+            size_t size = sizeof(matrix_transform);
+#ifdef DEBUG_WINDOW
+            vkMapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->mvpMatrixUBO.mem, 0, size, 0, &data);
+            memcpy(data, &matrix_transform, size);
+            vkUnmapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->mvpMatrixUBO.mem);
+#else
+            VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->mvpMatrixUBO.allocation,&data));
+            memcpy(data,&matrix_transform,size);
+            vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->mvpMatrixUBO.allocation);
+#endif
+        }
+        //ray cast
+        {
+            void *data;
+            size_t size = sizeof(view_pos);
+#ifdef DEBUG_WINDOW
+            vkMapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->viewPosUBO.mem, 0, size, 0, &data);
+            memcpy(data, &view_pos, size);
+            vkUnmapMemory(shared_renderer_vk_res->shared_device, renderer_vk_res->viewPosUBO.mem);
+#else
+            VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->viewPosUBO.allocation,&data));
+            memcpy(data,&view_pos,size);
+            vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->viewPosUBO.allocation);
+#endif
+        }
+    }
+    void uploadRenderParamsUBO(){
+        void* data;
+        size_t size = sizeof(RenderInfo);
+#ifdef DEBUG_WINDOW
+        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->renderInfoUBO.mem,0,size,0,&data);
+#else
+        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->renderInfoUBO.allocation,&data));
+#endif
+        memcpy(data,&render_info,size);
+#ifdef DEBUG_WINDOW
+        vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->renderInfoUBO.mem);
+#else
+        vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->renderInfoUBO.allocation);
+#endif
+    }
+    void updateVolumeInfo(){
+        assert(volume.isValid());
+        volume.getVolumeDim(reinterpret_cast<int &>(volume_info.volume_dim.x),
+                            reinterpret_cast<int &>(volume_info.volume_dim.y),
+                            reinterpret_cast<int &>(volume_info.volume_dim.z));
+        volume_info.volume_dim.w = volume.getMaxLod();
+        volume_info.padding_block_length = volume.getBlockLength();
+        volume_info.padding = volume.getBlockPadding();
+
+        volume_info.virtual_block_length = volume_info.padding_block_length - volume_info.padding * 2;
+
+        volume_info.lod0_block_dim = (volume_info.volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
+        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
+        volume_info.inv_volume_space = 1.f / volume_info.volume_space;
+        volume_info.virtual_block_length_space = (float)volume_info.virtual_block_length * volume_info.volume_space;
+
+        volume_info.voxel = std::min({volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z});
+
+        //upload
+        uploadVolumeInfoUBO();
+    }
+    void uploadVolumeInfoUBO(){
+        void* data;
+        size_t size = sizeof(VolumeInfo);
+#ifdef DEBUG_WINDOW
+        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->volumeInfoUBO.mem,0,size,0,&data);
+#else
+        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->volumeInfoUBO.allocation,&data));
+#endif
+        memcpy(data,&volume_info,size);
+#ifdef DEBUG_WINDOW
+        vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->volumeInfoUBO.mem);
+#else
+        vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->volumeInfoUBO.allocation);
+#endif
+    }
     void updateProxyCube(){
         //must after update volume
         float space_x,space_y,space_z;
@@ -598,20 +609,20 @@ struct VulkanVolumeRenderer::Impl{
             internal::createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferInfo.size,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                                    stagingBuffer,mem);
 #else
-        VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocationInfo,&stagingBuffer,&allocation,nullptr));
+            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocationInfo,&stagingBuffer,&allocation,nullptr));
 #endif
             //copy src buffer to staging buffer
             void* p;
 #ifdef DEBUG_WINDOW
             vkMapMemory(node_vk_res->device,mem,0,bufferInfo.size,0,&p);
 #else
-        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,allocation,&p));
+            VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,allocation,&p));
 #endif
             memcpy(p, proxy_cube.indices,sizeof(ProxyCube::indices));
 #ifdef DEBUG_WINDOW
             vkUnmapMemory(node_vk_res->device,mem);
 #else
-        vmaUnmapMemory(renderer_vk_res->allocator,allocation);
+            vmaUnmapMemory(renderer_vk_res->allocator,allocation);
 #endif
             //copy staging buffer to device
             VkCommandBuffer commandBuffer = beginSingleTimeCommand();
@@ -624,72 +635,12 @@ struct VulkanVolumeRenderer::Impl{
 
 //        vmaDestroyBuffer(renderer_vk_res->allocator,stagingBuffer,allocation);
     }
-    void updateVolumeInfo(){
-        assert(volume.isValid());
-        volume.getVolumeDim(reinterpret_cast<int &>(volume_info.volume_dim.x),
-                            reinterpret_cast<int &>(volume_info.volume_dim.y),
-                            reinterpret_cast<int &>(volume_info.volume_dim.z));
-        volume_info.volume_dim.w = volume.getMaxLod();
-        volume_info.padding_block_length = volume.getBlockLength();
-        volume_info.padding = volume.getBlockPadding();
-
-        volume_info.virtual_block_length = volume_info.padding_block_length - volume_info.padding * 2;
-
-        volume_info.lod0_block_dim = (volume_info.volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
-        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
-        volume_info.inv_volume_space = 1.f / volume_info.volume_space;
-        volume_info.virtual_block_length_space = (float)volume_info.virtual_block_length * volume_info.volume_space;
-
-        volume_info.voxel = std::min({volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z});
-
-        //upload
-        uploadVolumeInfoUBO();
-    }
-    void uploadVolumeInfoUBO(){
-        void* data;
-        size_t size = sizeof(VolumeInfo);
-#ifdef DEBUG_WINDOW
-        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->volumeInfoUBO.mem,0,size,0,&data);
-#else
-        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->volumeInfoUBO.allocation,&data));
-#endif
-        memcpy(data,&volume_info,size);
-#ifdef DEBUG_WINDOW
-        vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->volumeInfoUBO.mem);
-#else
-        vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->volumeInfoUBO.allocation);
-#endif
-    }
-    void uploadRenderParamsUBO(){
-        void* data;
-        size_t size = sizeof(RenderInfo);
-#ifdef DEBUG_WINDOW
-        vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->renderInfoUBO.mem,0,size,0,&data);
-#else
-        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->renderInfoUBO.allocation,&data));
-#endif
-        memcpy(data,&render_info,size);
-#ifdef DEBUG_WINDOW
-        vkUnmapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->renderInfoUBO.mem);
-#else
-        vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->renderInfoUBO.allocation);
-#endif
-    }
-
-    void updatePageTable(const std::vector<PageTableItem>& items){
-        page_table.clear();
-        for(const auto& item:items){
-            page_table.append({item.second,item.first});
-        }
-
-        uploadPageTable();
-    }
     void uploadPageTable(){
         void* data;
 #ifdef DEBUG_WINDOW
         vkMapMemory(shared_renderer_vk_res->shared_device,renderer_vk_res->pageTableUBO.mem,0,sizeof(HashTable),0,&data);
 #else
-                VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->pageTableUBO.allocation,&data));
+        VK_EXPR(vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->pageTableUBO.allocation,&data));
 #endif
         memcpy(data,&page_table,sizeof(page_table));
 #ifdef DEBUG_WINDOW
@@ -698,6 +649,7 @@ struct VulkanVolumeRenderer::Impl{
         vmaUnmapMemory(renderer_vk_res->allocator,renderer_vk_res->pageTableUBO.allocation);
 #endif
     }
+
     VkCommandBuffer beginSingleTimeCommand(){
         assert(shared_renderer_vk_res);
         std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
@@ -735,6 +687,7 @@ struct VulkanVolumeRenderer::Impl{
                              shared_renderer_vk_res->shared_graphics_command_pool,
                              1,&commandBuffer);
     }
+
     void transitionImageLayout(VkImage image, VkFormat, VkImageLayout oldLayout,
                                VkImageLayout newLayout){
         VkCommandBuffer commandBuffer = beginSingleTimeCommand();
@@ -780,8 +733,9 @@ struct VulkanVolumeRenderer::Impl{
 
         endSingleTimeCommand(commandBuffer);
     }
+
     void initResources(
-        VolumeRendererVulkanSharedResourceWrapper* render_vk_shared_res,
+        VolumeRendererExtVulkanSharedResourceWrapper* render_vk_shared_res,
         VulkanNodeSharedResourceWrapper* node_vk_res){
         assert(renderer_vk_res.get() && render_vk_shared_res && node_vk_res);
 
@@ -791,8 +745,8 @@ struct VulkanVolumeRenderer::Impl{
         auto physical_device = node_vk_res->physicalDevice;
         assert(physical_device);
         auto device = render_vk_shared_res->shared_device;
-        auto width = VolumeRendererVulkanSharedResourceWrapper::DefaultFrameWidth;
-        auto height = VolumeRendererVulkanSharedResourceWrapper::DefaultFrameHeight;
+        auto width = VolumeRendererExtVulkanSharedResourceWrapper::DefaultFrameWidth;
+        auto height = VolumeRendererExtVulkanSharedResourceWrapper::DefaultFrameHeight;
         int max_renderer_num = GPUResource::DefaultMaxRendererCount;
 
         //set texture shape
@@ -800,10 +754,9 @@ struct VulkanVolumeRenderer::Impl{
             const auto& texes = node_vk_res->textures;
             for(int i = 0;i<texes.size();i++){
                 volume_info.inv_texture_shape[i] = {1.f/texes[i].extent.width,
-                1.f/texes[i].extent.height,1.f/texes[i].extent.depth,i};
+                                                    1.f/texes[i].extent.height,1.f/texes[i].extent.depth,i};
             }
         }
-
         //create depth resource
         {
             auto find = getSupportedDepthFormat(physical_device,&renderer_vk_res->depthAttachment.format);
@@ -819,30 +772,30 @@ struct VulkanVolumeRenderer::Impl{
         }
         //create color resource
         {
-            renderer_vk_res->colorAttachment.format = VK_FORMAT_R8G8B8A8_UNORM;
-            createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->colorAttachment.format,
-                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                        renderer_vk_res->colorAttachment.image,renderer_vk_res->colorAttachment.mem);
-            createImageView(device,renderer_vk_res->colorAttachment.image,renderer_vk_res->colorAttachment.format,
-                            VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->colorAttachment.view);
-        }
-        //create ray pos attachment
-        {
-            renderer_vk_res->rayEntryAttachment.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+            //ray entry
+            renderer_vk_res->rayEntryAttachment.format = VolumeRendererExtVulkanSharedResourceWrapper::rayEntryImageFormat;
             createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->rayEntryAttachment.format,
-                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_STORAGE_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         renderer_vk_res->rayEntryAttachment.image,renderer_vk_res->rayEntryAttachment.mem);
             createImageView(device,renderer_vk_res->rayEntryAttachment.image,renderer_vk_res->rayEntryAttachment.format,
                             VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->rayEntryAttachment.view);
-            renderer_vk_res->rayExitAttachment.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+            //ray exit
+            renderer_vk_res->rayExitAttachment.format = VolumeRendererExtVulkanSharedResourceWrapper::rayExitImageFormat;
             createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->rayExitAttachment.format,
                         VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         renderer_vk_res->rayExitAttachment.image,renderer_vk_res->rayExitAttachment.mem);
             createImageView(device,renderer_vk_res->rayExitAttachment.image,renderer_vk_res->rayExitAttachment.format,
                             VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->rayExitAttachment.view);
+            //color
+            renderer_vk_res->colorAttachment.format = VolumeRendererExtVulkanSharedResourceWrapper::colorImageFormat;
+            createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->colorAttachment.format,
+                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_STORAGE_BIT,
+                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        renderer_vk_res->colorAttachment.image,renderer_vk_res->colorAttachment.mem);
+            createImageView(device,renderer_vk_res->colorAttachment.image,renderer_vk_res->colorAttachment.format,
+                            VK_IMAGE_ASPECT_COLOR_BIT,1,renderer_vk_res->colorAttachment.view);
         }
         //debug
 #ifdef DEBUG_WINDOW
@@ -855,25 +808,41 @@ struct VulkanVolumeRenderer::Impl{
 #endif
         //create framebuffer
         {
-            std::array<VkImageView,4> attachments = {
-                renderer_vk_res->rayEntryAttachment.view,
-                renderer_vk_res->rayExitAttachment.view,
+            //ray pos
+            {
+                std::array<VkImageView, 4> attachments = {renderer_vk_res->rayEntryAttachment.view,
+                                                          renderer_vk_res->rayExitAttachment.view,
 #ifdef DEBUG_WINDOW
-                debug.swapChainImageViews[0],//debug
+                                                          debug.swapChainImageViews[0], // debug
 #else
-                renderer_vk_res->colorAttachment.view,
+                                                          renderer_vk_res->colorAttachment.view,
 #endif
-                renderer_vk_res->depthAttachment.view
-            };
-            VkFramebufferCreateInfo framebufferInfo{};
-            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass = render_vk_shared_res->renderPass;
-            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-            framebufferInfo.pAttachments = attachments.data();
-            framebufferInfo.width = width;
-            framebufferInfo.height = height;
-            framebufferInfo.layers = 1;
-            VK_EXPR(vkCreateFramebuffer(device,&framebufferInfo,nullptr,&renderer_vk_res->framebuffer));
+                                                          renderer_vk_res->depthAttachment.view};
+                VkFramebufferCreateInfo framebufferInfo{};
+                framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                framebufferInfo.renderPass = render_vk_shared_res->firstRenderPass;
+                framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+                framebufferInfo.pAttachments = attachments.data();
+                framebufferInfo.width = width;
+                framebufferInfo.height = height;
+                framebufferInfo.layers = 1;
+                VK_EXPR(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &renderer_vk_res->firstFramebuffer));
+            }
+            //ray cast
+            {
+                std::array<VkImageView,1> attachments = {
+                    renderer_vk_res->depthAttachment.view
+                };
+                VkFramebufferCreateInfo framebufferInfo{};
+                framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                framebufferInfo.renderPass = render_vk_shared_res->secondRenderPass;
+                framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+                framebufferInfo.pAttachments = attachments.data();
+                framebufferInfo.width = width;
+                framebufferInfo.height = height;
+                framebufferInfo.layers = 1;
+                VK_EXPR(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &renderer_vk_res->secondFramebuffer));
+            }
         }
         //create tf texture
         {
@@ -957,6 +926,7 @@ struct VulkanVolumeRenderer::Impl{
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->viewPosUBO.buffer,&renderer_vk_res->viewPosUBO.allocation,nullptr));
 #endif
             //ray cast
+
             bufferInfo.size = sizeof(VolumeInfo);
 #ifdef DEBUG_WINDOW
             internal::createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferInfo.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -978,18 +948,27 @@ struct VulkanVolumeRenderer::Impl{
 #else
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->pageTableUBO.buffer,&renderer_vk_res->pageTableUBO.allocation,nullptr));
 #endif
-        }
+            bufferInfo.size = sizeof(RenderPassTag);
+            bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
+            VmaAllocationInfo info{};
+#ifdef DEBUG_WINDOW
+#else
+            VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->renderPassTagSSBO.buffer,&renderer_vk_res->renderPassTagSSBO.allocation,&info));
+#endif
+            renderer_vk_res->renderPassTagSSBO.mapped_ptr = info.pMappedData;
+            renderer_vk_res->renderPassTagSSBO.size = bufferInfo.size;
+        }
         //create descriptor sets
         {
-            // ray pos
+            //ray pos
             {
                 VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
                 allocateInfo.descriptorPool = render_vk_shared_res->descriptorPool;
                 allocateInfo.descriptorSetCount = 1;
                 allocateInfo.pSetLayouts = &render_vk_shared_res->rayPosLayout;
                 VK_EXPR(vkAllocateDescriptorSets(render_vk_shared_res->shared_device, &allocateInfo,
-                                             &renderer_vk_res->descriptorSet.raypos));
+                                                 &renderer_vk_res->descriptorSet.raypos));
 
                 VkDescriptorBufferInfo mvpBufferInfo{};
                 mvpBufferInfo.buffer = renderer_vk_res->mvpMatrixUBO.buffer;
@@ -1020,7 +999,6 @@ struct VulkanVolumeRenderer::Impl{
 
                 vkUpdateDescriptorSets(shared_renderer_vk_res->shared_device,descriptorWrites.size(),descriptorWrites.data(),0,nullptr);
             }
-
             //ray cast
             {
                 VkDescriptorSetAllocateInfo allocateInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -1030,14 +1008,24 @@ struct VulkanVolumeRenderer::Impl{
                 VK_EXPR(vkAllocateDescriptorSets(render_vk_shared_res->shared_device,&allocateInfo,&renderer_vk_res->descriptorSet.raycast));
 
                 VkDescriptorImageInfo rayEntryImageInfo{};
-                rayEntryImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                rayEntryImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 rayEntryImageInfo.imageView = renderer_vk_res->rayEntryAttachment.view;
                 rayEntryImageInfo.sampler = VK_NULL_HANDLE;
 
                 VkDescriptorImageInfo rayExitImageInfo{};
-                rayExitImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                rayExitImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                 rayExitImageInfo.imageView = renderer_vk_res->rayExitAttachment.view;
                 rayExitImageInfo.sampler = VK_NULL_HANDLE;
+
+                VkDescriptorImageInfo interColorImageInfo{};
+                interColorImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                interColorImageInfo.imageView = renderer_vk_res->colorAttachment.view;
+                interColorImageInfo.sampler = VK_NULL_HANDLE;
+
+                VkDescriptorBufferInfo renderPassTagBufferInfo{};
+                renderPassTagBufferInfo.buffer = renderer_vk_res->renderPassTagSSBO.buffer;
+                renderPassTagBufferInfo.offset = 0;
+                renderPassTagBufferInfo.range = renderer_vk_res->renderPassTagSSBO.size;
 
                 VkDescriptorImageInfo tfImageInfo{};
                 tfImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1067,12 +1055,12 @@ struct VulkanVolumeRenderer::Impl{
                 renderBufferInfo.offset = 0;
                 renderBufferInfo.range = sizeof(RenderInfo);
 
-                std::array<VkWriteDescriptorSet,7> descriptorWrites{};
+                std::array<VkWriteDescriptorSet,9> descriptorWrites{};
                 descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[0].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[0].dstBinding = 0;
                 descriptorWrites[0].dstArrayElement = 0;
-                descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+                descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
                 descriptorWrites[0].descriptorCount = 1;
                 descriptorWrites[0].pImageInfo = &rayEntryImageInfo;
 
@@ -1080,7 +1068,7 @@ struct VulkanVolumeRenderer::Impl{
                 descriptorWrites[1].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[1].dstBinding = 1;
                 descriptorWrites[1].dstArrayElement = 0;
-                descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+                descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
                 descriptorWrites[1].descriptorCount = 1;
                 descriptorWrites[1].pImageInfo = &rayExitImageInfo;
 
@@ -1088,33 +1076,33 @@ struct VulkanVolumeRenderer::Impl{
                 descriptorWrites[2].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[2].dstBinding = 2;
                 descriptorWrites[2].dstArrayElement = 0;
-                descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
                 descriptorWrites[2].descriptorCount = 1;
-                descriptorWrites[2].pImageInfo = &tfImageInfo;
+                descriptorWrites[2].pImageInfo = &interColorImageInfo;
 
                 descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[3].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[3].dstBinding = 3;
                 descriptorWrites[3].dstArrayElement = 0;
-                descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                descriptorWrites[3].descriptorCount = volumeImageInfo.size();
-                descriptorWrites[3].pImageInfo = volumeImageInfo.data();
+                descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                descriptorWrites[3].descriptorCount = 1;
+                descriptorWrites[3].pBufferInfo = &renderPassTagBufferInfo;
 
                 descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[4].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[4].dstBinding = 4;
                 descriptorWrites[4].dstArrayElement = 0;
-                descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 descriptorWrites[4].descriptorCount = 1;
-                descriptorWrites[4].pBufferInfo = &volumeBufferInfo;
+                descriptorWrites[4].pImageInfo = &tfImageInfo;
 
                 descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[5].dstSet = renderer_vk_res->descriptorSet.raycast;
                 descriptorWrites[5].dstBinding = 5;
                 descriptorWrites[5].dstArrayElement = 0;
-                descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                descriptorWrites[5].descriptorCount = 1;
-                descriptorWrites[5].pBufferInfo = &pageTableBufferInfo;
+                descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptorWrites[5].descriptorCount = volumeImageInfo.size();
+                descriptorWrites[5].pImageInfo = volumeImageInfo.data();
 
                 descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 descriptorWrites[6].dstSet = renderer_vk_res->descriptorSet.raycast;
@@ -1122,13 +1110,27 @@ struct VulkanVolumeRenderer::Impl{
                 descriptorWrites[6].dstArrayElement = 0;
                 descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 descriptorWrites[6].descriptorCount = 1;
-                descriptorWrites[6].pBufferInfo = &renderBufferInfo;
+                descriptorWrites[6].pBufferInfo = &volumeBufferInfo;
+
+                descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[7].dstSet = renderer_vk_res->descriptorSet.raycast;
+                descriptorWrites[7].dstBinding = 7;
+                descriptorWrites[7].dstArrayElement = 0;
+                descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[7].descriptorCount = 1;
+                descriptorWrites[7].pBufferInfo = &pageTableBufferInfo;
+
+                descriptorWrites[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                descriptorWrites[8].dstSet = renderer_vk_res->descriptorSet.raycast;
+                descriptorWrites[8].dstBinding = 8;
+                descriptorWrites[8].dstArrayElement = 0;
+                descriptorWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptorWrites[8].descriptorCount = 1;
+                descriptorWrites[8].pBufferInfo = &renderBufferInfo;
 
                 vkUpdateDescriptorSets(device,descriptorWrites.size(),descriptorWrites.data(),0,nullptr);
             }
         }
-
-
         //create proxy cube buffer
         {
 
@@ -1152,37 +1154,40 @@ struct VulkanVolumeRenderer::Impl{
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->proxyCubeBuffer.indexBuffer,&renderer_vk_res->proxyCubeBuffer.indexAllocation,nullptr));
 #endif
         }
-
+        //create result color
+        {
+            render_result = Framebuffer(width,height);
+        }
         //create draw command buffer and record
         {
-            std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
-            VkCommandBufferAllocateInfo allocateInfo{};
-            allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-            allocateInfo.commandPool = shared_renderer_vk_res->shared_graphics_command_pool;
-            allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-            allocateInfo.commandBufferCount = 1;
-            VK_EXPR(vkAllocateCommandBuffers(shared_renderer_vk_res->shared_device,
-                                             &allocateInfo,&renderer_vk_res->drawCommand));
-            VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-            VK_EXPR(vkBeginCommandBuffer(renderer_vk_res->drawCommand,&beginInfo));
-            VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-            renderPassInfo.renderPass = shared_renderer_vk_res->renderPass;
-            renderPassInfo.framebuffer = renderer_vk_res->framebuffer;
-            renderPassInfo.renderArea = {0,0};
-            renderPassInfo.renderArea.extent = {(uint32_t)width,(uint32_t)height};
-
-            std::array<VkClearValue,4> clearValues{};
-            clearValues[0].color = {0.f,0.f,0.f,0.f};
-            clearValues[1].color = {0.f,0.f,0.f,0.f};
-            clearValues[2].color = {0.f,0.f,0.f,0.f};
-            clearValues[3].depthStencil = {1.f,0};
-            renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-            renderPassInfo.pClearValues = clearValues.data();
-
-            auto cmd = renderer_vk_res->drawCommand;
-            vkCmdBeginRenderPass(cmd,&renderPassInfo,VK_SUBPASS_CONTENTS_INLINE);
             //ray pos
             {
+                std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+                VkCommandBufferAllocateInfo allocateInfo{};
+                allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                allocateInfo.commandPool = shared_renderer_vk_res->shared_graphics_command_pool;
+                allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocateInfo.commandBufferCount = 1;
+                VK_EXPR(vkAllocateCommandBuffers(shared_renderer_vk_res->shared_device,
+                                                 &allocateInfo,&renderer_vk_res->firstDrawCommand));
+                VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                VK_EXPR(vkBeginCommandBuffer(renderer_vk_res->firstDrawCommand,&beginInfo));
+                VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                renderPassInfo.renderPass = shared_renderer_vk_res->firstRenderPass;
+                renderPassInfo.framebuffer = renderer_vk_res->firstFramebuffer;
+                renderPassInfo.renderArea = {0,0};
+                renderPassInfo.renderArea.extent = {(uint32_t)width,(uint32_t)height};
+
+                std::array<VkClearValue,4> clearValues{};
+                clearValues[0].color = {0.f,0.f,0.f,0.f};
+                clearValues[1].color = {0.f,0.f,0.f,0.f};
+                clearValues[2].color = {0.f,0.f,0.f,0.f};
+                clearValues[3].depthStencil = {1.f,0};
+                renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                renderPassInfo.pClearValues = clearValues.data();
+
+                auto cmd = renderer_vk_res->firstDrawCommand;
+                vkCmdBeginRenderPass(cmd,&renderPassInfo,VK_SUBPASS_CONTENTS_INLINE);
 
                 vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shared_renderer_vk_res->pipeline.rayPos);
                 vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shared_renderer_vk_res->pipelineLayout.rayPos,0,1,
@@ -1191,21 +1196,48 @@ struct VulkanVolumeRenderer::Impl{
                 vkCmdBindVertexBuffers(cmd,0,1,&renderer_vk_res->proxyCubeBuffer.vertexBuffer,offsets);
                 vkCmdBindIndexBuffer(cmd,renderer_vk_res->proxyCubeBuffer.indexBuffer,0,VK_INDEX_TYPE_UINT32);
                 vkCmdDrawIndexed(cmd,36,1,0,0,0);
+
+                vkCmdEndRenderPass(cmd);
+                VK_EXPR(vkEndCommandBuffer(cmd));
             }
             //ray cast
             {
+                std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
+                VkCommandBufferAllocateInfo allocateInfo{};
+                allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                allocateInfo.commandPool = shared_renderer_vk_res->shared_graphics_command_pool;
+                allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocateInfo.commandBufferCount = 1;
+                VK_EXPR(vkAllocateCommandBuffers(shared_renderer_vk_res->shared_device,
+                                                 &allocateInfo,&renderer_vk_res->secondDrawCommand));
+                VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                VK_EXPR(vkBeginCommandBuffer(renderer_vk_res->secondDrawCommand,&beginInfo));
+                VkRenderPassBeginInfo renderPassInfo{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+                renderPassInfo.renderPass = shared_renderer_vk_res->secondRenderPass;
+                renderPassInfo.framebuffer = renderer_vk_res->secondFramebuffer;
+                renderPassInfo.renderArea = {0,0};
+                renderPassInfo.renderArea.extent = {(uint32_t)width,(uint32_t)height};
+
+                std::array<VkClearValue,4> clearValues{};
+                clearValues[0].color = {0.f,0.f,0.f,0.f};
+                clearValues[1].color = {0.f,0.f,0.f,0.f};
+                clearValues[2].color = {0.f,0.f,0.f,0.f};
+                clearValues[3].depthStencil = {1.f,0};
+                renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+                renderPassInfo.pClearValues = clearValues.data();
+
+                auto cmd = renderer_vk_res->secondDrawCommand;
+                vkCmdBeginRenderPass(cmd,&renderPassInfo,VK_SUBPASS_CONTENTS_INLINE);
+
                 vkCmdNextSubpass(cmd,VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,render_vk_shared_res->pipeline.rayCast);
                 vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shared_renderer_vk_res->pipelineLayout.rayCast,0,1,
                                         &renderer_vk_res->descriptorSet.raycast,0,nullptr);
                 vkCmdDraw(cmd,6,1,0,0);
+
+                vkCmdEndRenderPass(cmd);
+                VK_EXPR(vkEndCommandBuffer(cmd));
             }
-            vkCmdEndRenderPass(cmd);
-            VK_EXPR(vkEndCommandBuffer(cmd));
-        }
-        //create result color
-        {
-            render_result = Framebuffer(width,height);
         }
         //result download
         {
@@ -1245,38 +1277,26 @@ struct VulkanVolumeRenderer::Impl{
             vmaMapMemory(renderer_vk_res->allocator,renderer_vk_res->result_color.allocation,&result_color_mapped_ptr);
 #endif
         }
-
-    }
-
-
-    Impl(){
-        renderer_vk_res = std::make_unique<VolumeRendererVulkanPrivateResourceWrapper>();
-    }
-    ~Impl(){
-        destroy();
     }
 };
 
-
-
-static void CreateVulkanVolumeRendererSharedResources(
-    VolumeRendererVulkanSharedResourceWrapper* renderer_vk_res,
+static void CreateVulkanVolumeRendererExtSharedResources(
+    VolumeRendererExtVulkanSharedResourceWrapper* renderer_vk_res,
     VulkanNodeSharedResourceWrapper* node_vk_res
-    )
-{
+    ){
     assert(node_vk_res && renderer_vk_res);
     auto physical_device = node_vk_res->physicalDevice;
     assert(physical_device);
     auto device = renderer_vk_res->shared_device;
-    auto width = VolumeRendererVulkanSharedResourceWrapper::DefaultFrameWidth;
-    auto height = VolumeRendererVulkanSharedResourceWrapper::DefaultFrameHeight;
+    auto width = VolumeRendererExtVulkanSharedResourceWrapper::DefaultFrameWidth;
+    auto height = VolumeRendererExtVulkanSharedResourceWrapper::DefaultFrameHeight;
     int max_renderer_num = GPUResource::DefaultMaxRendererCount;
 
-    //create renderpass
+    //create render pass
     {
         std::array<VkAttachmentDescription,4> attachments{};
         // 0 for ray entry
-        attachments[0].format = VolumeRendererVulkanSharedResourceWrapper::rayEntryImageFormat;
+        attachments[0].format = VolumeRendererExtVulkanSharedResourceWrapper::rayEntryImageFormat;
         attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1286,7 +1306,7 @@ static void CreateVulkanVolumeRendererSharedResources(
         attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         // 1 for ray exit
-        attachments[1].format = VolumeRendererVulkanSharedResourceWrapper::rayExitImageFormat;
+        attachments[1].format = VolumeRendererExtVulkanSharedResourceWrapper::rayExitImageFormat;
         attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1300,7 +1320,7 @@ static void CreateVulkanVolumeRendererSharedResources(
 #ifdef DEBUG_WINDOW
         attachments[2].format =VK_FORMAT_B8G8R8A8_UNORM;// VolumeRendererVulkanSharedResourceWrapper::colorImageFormat;
 #else
-        attachments[2].format = VolumeRendererVulkanSharedResourceWrapper::colorImageFormat;
+        attachments[2].format = VolumeRendererExtVulkanSharedResourceWrapper::colorImageFormat;
 #endif
         attachments[2].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1308,14 +1328,9 @@ static void CreateVulkanVolumeRendererSharedResources(
         attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        //todo
-#ifdef DEBUG_WINDOW
-        attachments[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;//VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;//todo VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-#else
-        attachments[2].finalLayout =   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-#endif
+        attachments[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         // 3 for depth
-        attachments[3].format = VolumeRendererVulkanSharedResourceWrapper::depthImageFormat;
+        attachments[3].format = VolumeRendererExtVulkanSharedResourceWrapper::depthImageFormat;
         attachments[3].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1323,77 +1338,111 @@ static void CreateVulkanVolumeRendererSharedResources(
         attachments[3].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[3].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         attachments[3].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        //first render pass
+        {
+            VkSubpassDescription subpassDesc{};
 
-        // has 2 subpass
-        std::array<VkSubpassDescription,2> subpassDesc{};
+            VkAttachmentReference colorRefs[2];
+            colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            colorRefs[1] = {1,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
-        // first subpass: get ray entry and ray exit attachment
-        VkAttachmentReference colorRefs[2];
-        colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        colorRefs[1] = {1,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference depthRef = {3,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
-        VkAttachmentReference depthRef = {3,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+            subpassDesc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpassDesc.colorAttachmentCount = 2;
+            subpassDesc.pColorAttachments = colorRefs;
+            subpassDesc.pDepthStencilAttachment = &depthRef;
 
-        subpassDesc[0].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpassDesc[0].colorAttachmentCount = 2;
-        subpassDesc[0].pColorAttachments = colorRefs;
-        subpassDesc[0].pDepthStencilAttachment = &depthRef;
-        subpassDesc[0].inputAttachmentCount = 0;
-        subpassDesc[0].pInputAttachments = nullptr;
+            std::array<VkSubpassDependency,2> dependencies{};
+            dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[0].dstSubpass = 0;
+            dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+            dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-        // second subpass: ray cast render to color attachment
-        VkAttachmentReference colorRef = {2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-        VkAttachmentReference inputRefs[2];
-        inputRefs[0] = {0,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        inputRefs[1] = {1,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            dependencies[1].srcSubpass = 0;
+            dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+            dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-        subpassDesc[1].pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        subpassDesc[1].colorAttachmentCount = 1;
-        subpassDesc[1].pColorAttachments = &colorRef;
-        subpassDesc[1].pDepthStencilAttachment = &depthRef;
-        subpassDesc[1].inputAttachmentCount = 2;
-        subpassDesc[1].pInputAttachments = inputRefs;
+            VkRenderPassCreateInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+            renderPassInfo.pAttachments = attachments.data();
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpassDesc;
+            renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+            renderPassInfo.pDependencies = dependencies.data();
 
-        //use subpass dependencies for layout transitions
-        std::array<VkSubpassDependency,3> dependencies{};
+            VK_EXPR(vkCreateRenderPass(device,&renderPassInfo,nullptr,&renderer_vk_res->firstRenderPass));
+        }
+        //second render pass
+        {
+            attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            attachments[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
-        dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
-        dependencies[0].dstSubpass = 0;
-        dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-        dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+            attachments[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            attachments[1].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            attachments[2].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            attachments[3].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+#ifdef DEBUG_WINDOW
+            attachments[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;//VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;//todo VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#else
+            attachments[2].finalLayout =   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+#endif
 
-        dependencies[1].srcSubpass = 0;
-        dependencies[1].dstSubpass = 1;
-        dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
-        dependencies[2].srcSubpass = 1;
-        dependencies[2].dstSubpass = VK_SUBPASS_EXTERNAL;
-        dependencies[2].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dependencies[2].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-        dependencies[2].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        dependencies[2].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        dependencies[2].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+            VkSubpassDescription subpassDesc{};
 
-        VkRenderPassCreateInfo renderPassInfo{};
-        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-        renderPassInfo.pAttachments = attachments.data();
-        renderPassInfo.subpassCount = static_cast<uint32_t>(subpassDesc.size());
-        renderPassInfo.pSubpasses = subpassDesc.data();
-        renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
-        renderPassInfo.pDependencies = dependencies.data();
+            VkAttachmentReference colorRefs[3];
+            colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            colorRefs[1] = {1,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            colorRefs[2] = {2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
-        VK_EXPR(vkCreateRenderPass(device,&renderPassInfo,nullptr,&renderer_vk_res->renderPass));
+            VkAttachmentReference depthRef = {3,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+            subpassDesc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpassDesc.colorAttachmentCount = 0;
+            subpassDesc.pColorAttachments = nullptr;
+            subpassDesc.pDepthStencilAttachment = &depthRef;
+
+            std::array<VkSubpassDependency,2> dependencies{};
+            dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[0].dstSubpass = 0;
+            dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+            dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT| VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+            dependencies[1].srcSubpass = 0;
+            dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+            dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+            dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+            VkRenderPassCreateInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+            renderPassInfo.pAttachments = attachments.data();
+            renderPassInfo.subpassCount = 1;
+            renderPassInfo.pSubpasses = &subpassDesc;
+            renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
+            renderPassInfo.pDependencies = dependencies.data();
+
+            VK_EXPR(vkCreateRenderPass(device,&renderPassInfo,nullptr,&renderer_vk_res->secondRenderPass));
+        }
     }
-
-    //create push constant and descriptorset layout
+    //create descriptor set layout
     {
         //ray pos
         {
@@ -1419,71 +1468,86 @@ static void CreateVulkanVolumeRendererSharedResources(
 
             VK_EXPR(vkCreateDescriptorSetLayout(renderer_vk_res->shared_device,&layoutInfo,nullptr,&renderer_vk_res->rayPosLayout));
         }
-
         //ray cast
         {
             VkDescriptorSetLayoutBinding rayEntryBinding{};
             rayEntryBinding.binding = 0;
             rayEntryBinding.descriptorCount = 1;
-            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             rayEntryBinding.pImmutableSamplers = nullptr;
             rayEntryBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding rayExitBinding{};
             rayExitBinding.binding = 1;
             rayExitBinding.descriptorCount = 1;
-            rayExitBinding.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+            rayExitBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             rayExitBinding.pImmutableSamplers = nullptr;
             rayExitBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+            VkDescriptorSetLayoutBinding interColorBinding{};
+            rayEntryBinding.binding = 2;
+            rayEntryBinding.descriptorCount = 1;
+            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            rayEntryBinding.pImmutableSamplers = nullptr;
+            rayEntryBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkDescriptorSetLayoutBinding renderPassTagBinding{};
+            rayEntryBinding.binding = 3;
+            rayEntryBinding.descriptorCount = 1;
+            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            rayEntryBinding.pImmutableSamplers = nullptr;
+            rayEntryBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
             VkDescriptorSetLayoutBinding tfBinding{};
-            tfBinding.binding = 2;
+            tfBinding.binding = 4;
             tfBinding.descriptorCount = 1;
             tfBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             tfBinding.pImmutableSamplers = nullptr;
             tfBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding cachedVolumeBinding{};
-            cachedVolumeBinding.binding = 3;
+            cachedVolumeBinding.binding = 5;
             cachedVolumeBinding.descriptorCount = GPUResource::DefaultMaxGPUTextureCount;
             cachedVolumeBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             cachedVolumeBinding.pImmutableSamplers = nullptr;
             cachedVolumeBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding volumeInfoBinding{};
-            volumeInfoBinding.binding = 4;
+            volumeInfoBinding.binding = 6;
             volumeInfoBinding.descriptorCount = 1;
             volumeInfoBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             volumeInfoBinding.pImmutableSamplers = nullptr;
             volumeInfoBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding pageTableBinding{};
-            pageTableBinding.binding = 5;
+            pageTableBinding.binding = 7;
             pageTableBinding.descriptorCount = 1;
             pageTableBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             pageTableBinding.pImmutableSamplers = nullptr;
             pageTableBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding renderParamsBinding{};
-            renderParamsBinding.binding = 6;
+            renderParamsBinding.binding = 8;
             renderParamsBinding.descriptorCount = 1;
             renderParamsBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             renderParamsBinding.pImmutableSamplers = nullptr;
             renderParamsBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-            VkDescriptorSetLayoutBinding bindings[7] = {rayEntryBinding,     rayExitBinding,    tfBinding,
+            VkDescriptorSetLayoutBinding bindings[9] = {rayEntryBinding,     rayExitBinding,
+                                                        interColorBinding, renderPassTagBinding,
+                                                        tfBinding,
                                                         cachedVolumeBinding, volumeInfoBinding, pageTableBinding,
                                                         renderParamsBinding};
             VkDescriptorSetLayoutCreateInfo layoutCreateInfo{};
             layoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-            layoutCreateInfo.bindingCount = 7;
+            layoutCreateInfo.bindingCount = 9;
             layoutCreateInfo.pBindings = bindings;
             VK_EXPR(vkCreateDescriptorSetLayout(device, &layoutCreateInfo, nullptr, &renderer_vk_res->rayCastLayout));
         }
     }
     //create pipeline
     {
-        //ray pos
+        //first ray pos
         {
             auto vertShaderCode = readShaderFile(ShaderAssetPath + "volume_render_pos.vert.spv");
             auto fragShaderCode = readShaderFile(ShaderAssetPath + "volume_render_pos.frag.spv");
@@ -1604,7 +1668,7 @@ static void CreateVulkanVolumeRendererSharedResources(
             pipelineInfo.pDepthStencilState = &depthStencil;
             pipelineInfo.pColorBlendState = &colorBlending;
             pipelineInfo.layout = renderer_vk_res->pipelineLayout.rayPos;
-            pipelineInfo.renderPass = renderer_vk_res->renderPass;
+            pipelineInfo.renderPass = renderer_vk_res->firstRenderPass;
             pipelineInfo.subpass = 0;
             pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
@@ -1612,10 +1676,10 @@ static void CreateVulkanVolumeRendererSharedResources(
             vkDestroyShaderModule(device,fragShaderModule,nullptr);
             vkDestroyShaderModule(device,vertShaderModule,nullptr);
         }
-        //ray cast
+        //second ray cast
         {
-            auto vertShaderCode = readShaderFile(ShaderAssetPath + "volume_render_shading.vert.spv");
-            auto fragShaderCode = readShaderFile(ShaderAssetPath + "volume_render_shading.frag.spv");
+            auto vertShaderCode = readShaderFile(ShaderAssetPath + "volume_renderPass_shading.vert.spv");
+            auto fragShaderCode = readShaderFile(ShaderAssetPath + "volume_renderPass_shading.frag.spv");
             VkShaderModule vertShaderModule = createShaderModule(device,vertShaderCode);
             VkShaderModule fragShaderModule = createShaderModule(device,fragShaderCode);
 
@@ -1723,7 +1787,7 @@ static void CreateVulkanVolumeRendererSharedResources(
             pipelineInfo.pDepthStencilState = &depthStencil;
             pipelineInfo.pColorBlendState = &colorBlending;
             pipelineInfo.layout = renderer_vk_res->pipelineLayout.rayCast;
-            pipelineInfo.renderPass = renderer_vk_res->renderPass;
+            pipelineInfo.renderPass = renderer_vk_res->secondRenderPass;
             pipelineInfo.subpass = 1;
             pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
@@ -1733,17 +1797,16 @@ static void CreateVulkanVolumeRendererSharedResources(
         }
     }
     //create descriptor pool
-
     {
         std::array<VkDescriptorPoolSize,3> poolSize{};
         poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSize[0].descriptorCount = max_renderer_num * (5+1);
-        poolSize[1].type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-        poolSize[1].descriptorCount = max_renderer_num * (2+1);
+        poolSize[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSize[1].descriptorCount = max_renderer_num * (3+1);
         poolSize[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         poolSize[2].descriptorCount = max_renderer_num * (2+1);
-//        poolSize[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-//        poolSize[3].descriptorCount = max_renderer_num * (1 + 1);
+        poolSize[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        poolSize[3].descriptorCount = max_renderer_num * (1 + 1);
 
         VkDescriptorPoolCreateInfo poolInfo{};
         poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1753,20 +1816,17 @@ static void CreateVulkanVolumeRendererSharedResources(
 
         VK_EXPR(vkCreateDescriptorPool(device,&poolInfo,nullptr,&renderer_vk_res->descriptorPool));
     }
-
-
 }
 
-VulkanVolumeRenderer* VulkanVolumeRenderer::Create(VulkanNodeSharedResourceWrapper *node_vk_res)
-{
-    static std::unordered_map<VulkanNodeSharedResourceWrapper*,std::pair<VolumeRendererVulkanSharedResourceWrapper,bool>> renderer_vs_res_map;
+VulkanVolumeRendererExt* VulkanVolumeRendererExt::Create(VulkanNodeSharedResourceWrapper* node_vk_res){
+    static std::unordered_map<VulkanNodeSharedResourceWrapper*,std::pair<VolumeRendererExtVulkanSharedResourceWrapper,bool>> renderer_vs_res_map;
     if(!renderer_vs_res_map[node_vk_res].second){
         SetupVulkanRendererSharedResources(node_vk_res,&renderer_vs_res_map[node_vk_res].first);
-        CreateVulkanVolumeRendererSharedResources(&renderer_vs_res_map[node_vk_res].first,node_vk_res);
+        CreateVulkanVolumeRendererExtSharedResources(&renderer_vs_res_map[node_vk_res].first,node_vk_res);
         renderer_vs_res_map[node_vk_res].second = true;
     }
     assert(node_vk_res);
-    auto ret = new VulkanVolumeRenderer();
+    auto ret = new VulkanVolumeRendererExt();
     try{
         ret->impl = std::make_unique<Impl>();
         ret->impl->initResources(&renderer_vs_res_map[node_vk_res].first,node_vk_res);
@@ -1779,47 +1839,50 @@ VulkanVolumeRenderer* VulkanVolumeRenderer::Create(VulkanNodeSharedResourceWrapp
     return ret;
 }
 
-Renderer::Type VulkanVolumeRenderer::getRendererType() const
-{
-    return Renderer::VOLUME;
-}
-const Framebuffer &VulkanVolumeRenderer::getFrameBuffers() const
-{
-    return impl->getFrameRenderResult();
-}
-void VulkanVolumeRenderer::render(const VolumeRendererCamera &camera)
-{
-    impl->render(camera);
-}
-VulkanVolumeRenderer::~VulkanVolumeRenderer()
-{
-
-}
-void VulkanVolumeRenderer::destroy()
-{
-    impl->destroy();
-}
-void VulkanVolumeRenderer::setVolume(const Volume& volume)
+void VulkanVolumeRendererExt::setVolume(const Volume &volume)
 {
     impl->setVolume(volume);
 }
-void VulkanVolumeRenderer::setTransferFunction(const TransferFunctionExt1D& tf)
+Renderer::Type VulkanVolumeRendererExt::getRendererType() const
 {
-    impl->setTransferFunction1D(tf.tf,tf.TFDim,sizeof(tf.tf)/sizeof(float));
+    return Renderer::VOLUME_EXT;
 }
-void VulkanVolumeRenderer::updatePageTable(const std::vector<PageTableItem>& items)
+const Framebuffer &VulkanVolumeRendererExt::getFrameBuffers() const
+{
+    return impl->getFrameRenderResult();
+}
+void VulkanVolumeRendererExt::updatePageTable(const std::vector<PageTableItem> &items)
 {
     impl->updatePageTable(items);
 }
-void VulkanVolumeRenderer::setTransferFunction(const TransferFunction& tf)
+void VulkanVolumeRendererExt::setTransferFunction(const TransferFunction &tf)
 {
     TransferFunctionExt1D tf_ext1d{tf};
     ::mrayns::ComputeTransferFunction1DExt(tf_ext1d);
     impl->setTransferFunction1D(tf_ext1d.tf,tf_ext1d.TFDim,sizeof(tf_ext1d.tf)/sizeof(float));
 }
+void VulkanVolumeRendererExt::setTransferFunction(const TransferFunctionExt1D &tf)
+{
+    impl->setTransferFunction1D(tf.tf,tf.TFDim,sizeof(tf.tf)/sizeof(float));
+}
+void VulkanVolumeRendererExt::render(const VolumeRendererCamera &camera)
+{
+    bool e = this->renderPass(camera,true);
+    if(!e)
+        LOG_INFO("notice: call render for VolumeRendererExt but render is not finished");
+}
+bool VulkanVolumeRendererExt::renderPass(const VolumeRendererCamera &camera, bool newFrame)
+{
+    return impl->renderPass(camera,newFrame);
+}
+void VulkanVolumeRendererExt::destroy()
+{
+    impl->destroy();
+}
+VulkanVolumeRendererExt::~VulkanVolumeRendererExt()
+{
+}
 
-}//namespace internal
-
-
+}
 
 MRAYNS_END

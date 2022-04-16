@@ -1,5 +1,5 @@
 //
-// Created by wyz on 2022/3/3.
+// Created by wyz on 2022/4/15.
 //
 #pragma once
 #include "VulkanUtil.hpp"
@@ -8,9 +8,7 @@
 MRAYNS_BEGIN
 namespace internal{
 
-
-
-class VulkanVolumeRenderer:public VolumeRenderer{
+class VulkanVolumeRendererExt:public VolumeRendererExt{
   public:
 
     void setVolume(const Volume&) override;
@@ -20,29 +18,29 @@ class VulkanVolumeRenderer:public VolumeRenderer{
     void setTransferFunction(const TransferFunction&) override;
     void setTransferFunction(const TransferFunctionExt1D&) override;
     void render(const VolumeRendererCamera&) override;
+    bool renderPass(const VolumeRendererCamera&,bool) override;
+    static VulkanVolumeRendererExt* Create(VulkanNodeSharedResourceWrapper*);
 
-    static VulkanVolumeRenderer* Create(VulkanNodeSharedResourceWrapper*);
-
-    friend class VulkanVolumeRendererDeleter;
+    friend class VulkanVolumeRendererExtDeleter;
     friend class VulkanRendererDeleter;
 
   private:
 
     void destroy();
-    ~VulkanVolumeRenderer() override;
+    ~VulkanVolumeRendererExt() override;
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
 
-class VulkanVolumeRendererDeleter{
+class VulkanVolumeRendererExtDeleter{
   public:
-    constexpr VulkanVolumeRendererDeleter() noexcept = default;
-    VulkanVolumeRendererDeleter(const VulkanVolumeRendererDeleter&) noexcept = default;
-    void operator()(VulkanVolumeRenderer* ptr) const noexcept{
+    constexpr VulkanVolumeRendererExtDeleter() noexcept = default;
+    VulkanVolumeRendererExtDeleter(const VulkanVolumeRendererExtDeleter& ) noexcept = default;
+    void operator()(VulkanVolumeRendererExt* ptr) const noexcept{
         ptr->destroy();
     }
 };
-}
 
+}
 
 MRAYNS_END

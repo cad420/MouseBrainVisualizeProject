@@ -37,6 +37,7 @@ class PageTable{
 
     using ValueItem = Volume::BlockIndex;
 
+    int getAvailableCount();
 
     //add new key
     //will throw exception if exists
