@@ -31,7 +31,7 @@ struct VolumeHelper{
             {0,0,-1},
             {0,0,1}
         };
-        Vector3i block_index = {blockIndex.x,blockIndex.y,blockIndex.w};
+        Vector3i block_index = {blockIndex.x,blockIndex.y,blockIndex.z};
         for(int i = 0; i < 6; i++){
             auto n_block_index = block_index + neighbors[i];
             if(isValidBlock(n_block_index)){
@@ -40,7 +40,14 @@ struct VolumeHelper{
         }
     }
     static BlockIndex GetNextLodBlockIndex(const BlockIndex& blockIndex){
-        return BlockIndex{(blockIndex.x+1)/2,(blockIndex.y+1)/2,(blockIndex.z+1)/2,blockIndex.w+1};
+        return BlockIndex{(blockIndex.x)/2,(blockIndex.y)/2,(blockIndex.z)/2,blockIndex.w+1};
+    }
+    static BlockIndex GetLodBlockIndex(const BlockIndex& blockIndex,int targetLod){
+        if(blockIndex.w == targetLod) return blockIndex;
+        if(targetLod < blockIndex.w){
+            throw std::runtime_error("target lod should bigger than current lod");
+        }
+        return GetLodBlockIndex(GetNextLodBlockIndex(blockIndex),targetLod);
     }
     static bool VolumeSpacePositionInsideVolume(const Volume& volume,const Vector3f& position){
         auto volume_board= volume.getVolumeSpace() * volume.getVolumeDim();

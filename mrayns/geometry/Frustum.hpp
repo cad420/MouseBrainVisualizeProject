@@ -9,12 +9,19 @@ MRAYNS_BEGIN
 struct BoundBox{
     Vector3f min_p;
     Vector3f max_p;
+
+    BoundBox& Expand(const Vector3f& pad){
+        min_p -= pad;
+        max_p += pad;
+        return *this;
+    }
 };
 inline bool Contain(const BoundBox& box,const Vector3f& point){
     return box.min_p.x <= point.x && point.x <= box.max_p.x
         && box.min_p.y <= point.y && point.y <= box.max_p.y
         && box.min_p.z <= point.z && point.z <= box.max_p.z;
 }
+
 inline BoundBox UnionBoundBox(const BoundBox& b1,const BoundBox& b2){
     return BoundBox{
         {
