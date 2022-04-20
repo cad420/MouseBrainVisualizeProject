@@ -11,7 +11,10 @@
 #include "../../Config.hpp"
 #include "../../algorithm/GeometryHelper.hpp"
 #include "Common.hpp"
-
+#ifdef DEBUG_WINDOW
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
+#endif
 MRAYNS_BEGIN
 namespace internal{
 
@@ -138,7 +141,7 @@ struct VulkanVolumeRendererExt::Impl{
     }renderPass_tag;
     static constexpr int MaxVolumeLod = 12;
     struct VolumeInfo{
-        Vector4ui volume_dim;//x y z max_lod
+        Vector4f volume_board;//x y z max_lod
         Vector3ui lod0_block_dim;uint32_t padding0 = 1;
         Vector3f volume_space;uint32_t padding1 = 2;
         Vector3f inv_volume_space;uint32_t padding2 = 3;
@@ -302,7 +305,12 @@ struct VulkanVolumeRendererExt::Impl{
     }debug;
 #endif
 
-
+    Impl(){
+        renderer_vk_res = std::make_unique<VolumeRendererExtVulkanPrivateResourceWrapper>();
+    }
+    ~Impl(){
+        destroy();
+    }
     void destroy(){
 
     }
@@ -384,6 +392,8 @@ struct VulkanVolumeRendererExt::Impl{
         uploadPageTable();
     }
     bool renderPass(const VolumeRendererCamera& camera,bool newFrame){
+        //
+        memset(renderer_vk_res->renderPassTagSSBO.mapped_ptr,0,renderer_vk_res->renderPassTagSSBO.size);
         //submit draw command
         VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         VkFence fence;
@@ -407,6 +417,9 @@ struct VulkanVolumeRendererExt::Impl{
             std::lock_guard<std::mutex> lk(shared_renderer_vk_res->pool_mtx);
             vkDestroyFence(shared_renderer_vk_res->shared_device, fence, nullptr);
         }
+#ifdef DEBUG_WINDOW
+        debug.submit(shared_renderer_vk_res->shared_graphics_queue);
+#endif
         //new frame should call once more again
         if(newFrame){
             return renderPass(camera,false);
@@ -416,6 +429,7 @@ struct VulkanVolumeRendererExt::Impl{
         return tag == 0;
     }
     const Framebuffer& getFrameRenderResult(){
+        transitionImageLayout(renderer_vk_res->colorAttachment.image,renderer_vk_res->colorAttachment.format,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &renderer_vk_res->resultCopyCommand;
@@ -439,7 +453,14 @@ struct VulkanVolumeRendererExt::Impl{
 
     void updateRenderParamsUBO(const VolumeRendererCamera& camera){
         //params for ray pos
-        view_pos = vec4(camera.position,Contain(BoundBox{{0.f,0.f,0.f},{volume.getVolumeSpace() * volume.getVolumeDim()}},camera.position));
+        const float VoxelPad = 2.f;
+        view_pos = vec4(camera.position,
+                        Contain(
+                            BoundBox{
+                                {0.f,0.f,0.f},
+                                {volume.getVolumeSpace() * volume.getVolumeDim()}}.Expand(Vector3f(0.1f*VoxelPad)),//todo
+                            camera.position));
+        LOG_DEBUG("inside volume: {} {} {} {}",view_pos.x,view_pos.y,view_pos.z,view_pos.w);
         matrix_transform.model = Matrix4f(1.f);
         auto view = GeometryHelper::ExtractViewMatrixFromCamera(camera);
         //todo
@@ -502,17 +523,22 @@ struct VulkanVolumeRendererExt::Impl{
     }
     void updateVolumeInfo(){
         assert(volume.isValid());
-        volume.getVolumeDim(reinterpret_cast<int &>(volume_info.volume_dim.x),
-                            reinterpret_cast<int &>(volume_info.volume_dim.y),
-                            reinterpret_cast<int &>(volume_info.volume_dim.z));
-        volume_info.volume_dim.w = volume.getMaxLod();
+        Vector3ui volume_dim;
+        volume.getVolumeDim(reinterpret_cast<int &>(volume_dim.x),
+                            reinterpret_cast<int &>(volume_dim.y),
+                            reinterpret_cast<int &>(volume_dim.z));
+        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
+        volume_info.volume_board = Vector4f{volume_dim.x * volume_info.volume_space.x,
+                                            volume_dim.y * volume_info.volume_space.y,
+                                            volume_dim.z * volume_info.volume_space.z,1.f};
+        volume_info.volume_board.w = volume.getMaxLod();
         volume_info.padding_block_length = volume.getBlockLength();
         volume_info.padding = volume.getBlockPadding();
 
         volume_info.virtual_block_length = volume_info.padding_block_length - volume_info.padding * 2;
 
-        volume_info.lod0_block_dim = (volume_info.volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
-        volume.getVolumeSpace(volume_info.volume_space.x, volume_info.volume_space.y, volume_info.volume_space.z);
+        volume_info.lod0_block_dim = (volume_dim + volume_info.virtual_block_length - (uint32_t)1) / volume_info.virtual_block_length;
+
         volume_info.inv_volume_space = 1.f / volume_info.volume_space;
         volume_info.virtual_block_length_space = (float)volume_info.virtual_block_length * volume_info.volume_space;
 
@@ -722,6 +748,13 @@ struct VulkanVolumeRendererExt::Impl{
             sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         }
+        else if(oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL){
+            barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+            sourceStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        }
         else{
             throw std::invalid_argument("unsupported layout transition!");
         }
@@ -783,7 +816,7 @@ struct VulkanVolumeRendererExt::Impl{
             //ray exit
             renderer_vk_res->rayExitAttachment.format = VolumeRendererExtVulkanSharedResourceWrapper::rayExitImageFormat;
             createImage(physical_device,device,width,height,1,VK_SAMPLE_COUNT_1_BIT,renderer_vk_res->rayExitAttachment.format,
-                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT,
+                        VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_STORAGE_BIT,
                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                         renderer_vk_res->rayExitAttachment.image,renderer_vk_res->rayExitAttachment.mem);
             createImageView(device,renderer_vk_res->rayExitAttachment.image,renderer_vk_res->rayExitAttachment.format,
@@ -908,7 +941,8 @@ struct VulkanVolumeRendererExt::Impl{
             bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
             VmaAllocationCreateInfo allocInfo{};
-            allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
             //ray pos
 #ifdef DEBUG_WINDOW
@@ -953,10 +987,13 @@ struct VulkanVolumeRendererExt::Impl{
 
             VmaAllocationInfo info{};
 #ifdef DEBUG_WINDOW
+            internal::createBuffer(node_vk_res->physicalDevice,node_vk_res->device,bufferInfo.size,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT,renderer_vk_res->renderPassTagSSBO.buffer,renderer_vk_res->renderPassTagSSBO.mem);
+            vkMapMemory(render_vk_shared_res->shared_device,renderer_vk_res->renderPassTagSSBO.mem,0,bufferInfo.size,0,&renderer_vk_res->renderPassTagSSBO.mapped_ptr);
 #else
             VK_EXPR(vmaCreateBuffer(renderer_vk_res->allocator,&bufferInfo,&allocInfo,&renderer_vk_res->renderPassTagSSBO.buffer,&renderer_vk_res->renderPassTagSSBO.allocation,&info));
-#endif
             renderer_vk_res->renderPassTagSSBO.mapped_ptr = info.pMappedData;
+#endif
             renderer_vk_res->renderPassTagSSBO.size = bufferInfo.size;
         }
         //create descriptor sets
@@ -1218,18 +1255,14 @@ struct VulkanVolumeRendererExt::Impl{
                 renderPassInfo.renderArea = {0,0};
                 renderPassInfo.renderArea.extent = {(uint32_t)width,(uint32_t)height};
 
-                std::array<VkClearValue,4> clearValues{};
-                clearValues[0].color = {0.f,0.f,0.f,0.f};
-                clearValues[1].color = {0.f,0.f,0.f,0.f};
-                clearValues[2].color = {0.f,0.f,0.f,0.f};
-                clearValues[3].depthStencil = {1.f,0};
+                std::array<VkClearValue,1> clearValues{};
+                clearValues[0].depthStencil = {1.f,0};
                 renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
                 renderPassInfo.pClearValues = clearValues.data();
 
                 auto cmd = renderer_vk_res->secondDrawCommand;
                 vkCmdBeginRenderPass(cmd,&renderPassInfo,VK_SUBPASS_CONTENTS_INLINE);
 
-                vkCmdNextSubpass(cmd,VK_SUBPASS_CONTENTS_INLINE);
                 vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,render_vk_shared_res->pipeline.rayCast);
                 vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_GRAPHICS,shared_renderer_vk_res->pipelineLayout.rayCast,0,1,
                                         &renderer_vk_res->descriptorSet.raycast,0,nullptr);
@@ -1303,7 +1336,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         // 1 for ray exit
         attachments[1].format = VolumeRendererExtVulkanSharedResourceWrapper::rayExitImageFormat;
@@ -1313,7 +1346,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[1].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         // 2 for ray cast(color)
         //debug
@@ -1328,7 +1361,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[2].finalLayout = VK_IMAGE_LAYOUT_GENERAL;
         // 3 for depth
         attachments[3].format = VolumeRendererExtVulkanSharedResourceWrapper::depthImageFormat;
         attachments[3].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1342,14 +1375,16 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         {
             VkSubpassDescription subpassDesc{};
 
-            VkAttachmentReference colorRefs[2];
+            //layout is a VkImageLayout value specifying the layout the attachment uses during the subpas
+            VkAttachmentReference colorRefs[3];
             colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
             colorRefs[1] = {1,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+            colorRefs[2] = {2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
             VkAttachmentReference depthRef = {3,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
             subpassDesc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpassDesc.colorAttachmentCount = 2;
+            subpassDesc.colorAttachmentCount = 3;
             subpassDesc.pColorAttachments = colorRefs;
             subpassDesc.pDepthStencilAttachment = &depthRef;
 
@@ -1383,30 +1418,16 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         }
         //second render pass
         {
-            attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            //only use depth attachment
             attachments[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
-            attachments[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            attachments[1].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            attachments[2].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
             attachments[3].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-#ifdef DEBUG_WINDOW
-            attachments[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;//VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;//todo VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-#else
-            attachments[2].finalLayout =   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-#endif
 
 
             VkSubpassDescription subpassDesc{};
 
-            VkAttachmentReference colorRefs[3];
-            colorRefs[0] = {0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-            colorRefs[1] = {1,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-            colorRefs[2] = {2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
-            VkAttachmentReference depthRef = {3,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+            VkAttachmentReference depthRef = {0,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 
             subpassDesc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
             subpassDesc.colorAttachmentCount = 0;
@@ -1432,8 +1453,8 @@ static void CreateVulkanVolumeRendererExtSharedResources(
 
             VkRenderPassCreateInfo renderPassInfo{};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
-            renderPassInfo.pAttachments = attachments.data();
+            renderPassInfo.attachmentCount = 1;
+            renderPassInfo.pAttachments = &attachments[3];
             renderPassInfo.subpassCount = 1;
             renderPassInfo.pSubpasses = &subpassDesc;
             renderPassInfo.dependencyCount = static_cast<uint32_t>(dependencies.size());
@@ -1485,18 +1506,18 @@ static void CreateVulkanVolumeRendererExtSharedResources(
             rayExitBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding interColorBinding{};
-            rayEntryBinding.binding = 2;
-            rayEntryBinding.descriptorCount = 1;
-            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-            rayEntryBinding.pImmutableSamplers = nullptr;
-            rayEntryBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            interColorBinding.binding = 2;
+            interColorBinding.descriptorCount = 1;
+            interColorBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            interColorBinding.pImmutableSamplers = nullptr;
+            interColorBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding renderPassTagBinding{};
-            rayEntryBinding.binding = 3;
-            rayEntryBinding.descriptorCount = 1;
-            rayEntryBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            rayEntryBinding.pImmutableSamplers = nullptr;
-            rayEntryBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+            renderPassTagBinding.binding = 3;
+            renderPassTagBinding.descriptorCount = 1;
+            renderPassTagBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            renderPassTagBinding.pImmutableSamplers = nullptr;
+            renderPassTagBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
             VkDescriptorSetLayoutBinding tfBinding{};
             tfBinding.binding = 4;
@@ -1634,13 +1655,13 @@ static void CreateVulkanVolumeRendererExtSharedResources(
             colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
             colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;//!!!
             colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
-            VkPipelineColorBlendAttachmentState colorBlendAttachments[] = {colorBlendAttachment,colorBlendAttachment};
+            VkPipelineColorBlendAttachmentState colorBlendAttachments[] = {colorBlendAttachment,colorBlendAttachment,colorBlendAttachment};
 
             VkPipelineColorBlendStateCreateInfo colorBlending{};
             colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
             colorBlending.logicOpEnable = VK_FALSE;
             colorBlending.logicOp = VK_LOGIC_OP_COPY;
-            colorBlending.attachmentCount = 2;
+            colorBlending.attachmentCount = 3;
             colorBlending.pAttachments = colorBlendAttachments;
             colorBlending.blendConstants[0] = 0.f;
             colorBlending.blendConstants[1] = 0.f;
@@ -1678,7 +1699,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
         }
         //second ray cast
         {
-            auto vertShaderCode = readShaderFile(ShaderAssetPath + "volume_renderPass_shading.vert.spv");
+            auto vertShaderCode = readShaderFile(ShaderAssetPath + "volume_render_shading.vert.spv");
             auto fragShaderCode = readShaderFile(ShaderAssetPath + "volume_renderPass_shading.frag.spv");
             VkShaderModule vertShaderModule = createShaderModule(device,vertShaderCode);
             VkShaderModule fragShaderModule = createShaderModule(device,fragShaderCode);
@@ -1788,7 +1809,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
             pipelineInfo.pColorBlendState = &colorBlending;
             pipelineInfo.layout = renderer_vk_res->pipelineLayout.rayCast;
             pipelineInfo.renderPass = renderer_vk_res->secondRenderPass;
-            pipelineInfo.subpass = 1;
+            pipelineInfo.subpass = 0;
             pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
             VK_EXPR(vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&pipelineInfo,nullptr,&renderer_vk_res->pipeline.rayCast));
@@ -1798,7 +1819,7 @@ static void CreateVulkanVolumeRendererExtSharedResources(
     }
     //create descriptor pool
     {
-        std::array<VkDescriptorPoolSize,3> poolSize{};
+        std::array<VkDescriptorPoolSize,4> poolSize{};
         poolSize[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         poolSize[0].descriptorCount = max_renderer_num * (5+1);
         poolSize[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;

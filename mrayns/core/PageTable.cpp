@@ -21,6 +21,7 @@ struct PageTable::Impl{
     ~Impl(){
 
     }
+    //todo 高优先级的应该随着时间下调优先级 否则低优先级的会不断被换出和换入
     struct LRU2{
         LRU2(int lru_size,int queue_size)
         :lru(lru_size),q_size(queue_size)
@@ -732,7 +733,7 @@ std::vector<PageTable::EntryItemExt> PageTable::queriesAndLockExt(const std::vec
 }
 int PageTable::getAvailableCount()
 {
-    return 0;
+    return impl->getCacheCount();
 }
 
 MRAYNS_END

@@ -41,10 +41,10 @@ BoundBox UnionBoundBoxes(const BoundBox& b1,const BoundBox& b2,T&&... others){
     return UnionBoundBoxes(UnionBoundBox(b1,b2),others...);
 }
 
-enum class BoxVisibility{
-    Invisible,
-    Intersecting,
-    FullyVisible
+enum class BoxVisibility:uint32_t{
+    Invisible = 0,
+    Intersecting = 1,
+    FullyVisible = 3
 };
 
 struct Frustum{

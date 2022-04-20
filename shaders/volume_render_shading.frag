@@ -14,7 +14,7 @@ layout(binding = 3) uniform sampler3D CachedVolume[MaxTextureNum];
 
 //uoload once for one volume
 layout(std140,binding = 4) uniform VolumeInfoUBO{
-    uvec4 volume_dim;//x y z and max_lod //16
+    vec4 volume_board;//x y z and max_lod //16
     uvec3 lod0_block_dim; //16
     vec3 volume_space; //16
     vec3 inv_volume_space; //16
@@ -23,7 +23,6 @@ layout(std140,binding = 4) uniform VolumeInfoUBO{
     uint padding; //4
     uint padding_block_length; //4
     float voxel; //4
-
     vec3 inv_texture_shape[MaxGPUTextureCount];//256
 }volumeInfoUBO;
 
@@ -40,6 +39,7 @@ uint GetHashValue(in uvec4 key){
     }
     return value;
 }
+#define MAX_QUERY_NUM 64
 uvec4 QueryPageTable(in uvec4 key){
     uint hash_v = GetHashValue(key);
     uint pos = hash_v % HashTableSize;
@@ -57,7 +57,7 @@ uvec4 QueryPageTable(in uvec4 key){
         }
         if(!positive) i++;
         positive = !positive;
-        if(i > HashTableSize){
+        if(i > MAX_QUERY_NUM){
             break;
         }
     }
@@ -88,7 +88,12 @@ int ComputeCurrentSampleLod(in vec3 rayPos){
 
     return MaxVolumeLod - 1;
 }
-
+bool InsideVolume(in vec3 samplePos){
+    return samplePos.x >= 0.f && samplePos.y >= 0.f && samplePos.z >= 0.f
+    && samplePos.x <= volumeInfoUBO.volume_board.x
+    && samplePos.y <= volumeInfoUBO.volume_board.y
+    && samplePos.z <= volumeInfoUBO.volume_board.z;
+}
 // no check for samplePos, caller should check if samplePos is valid
 int VirtualSample(in int sampleLod,in vec3 samplePos,out float sampleScalar){
     int sampleLodT = 1 << sampleLod;
@@ -96,6 +101,7 @@ int VirtualSample(in int sampleLod,in vec3 samplePos,out float sampleScalar){
 
     uvec4 texture_entry = QueryPageTable(uvec4(block_index,sampleLod));
     if(texture_entry.w == MaxTextureNum){
+        sampleScalar = 0.f;
         return 0;
     }
     //no check for texture entry
@@ -145,14 +151,74 @@ vec3 GetRayExitPos(in vec3 rayDirection,in vec3 rayPos,in int sampleLod){
     vec3 skip_pos = rayPos + rayDirection * t.y;
     return skip_pos;
 }
+vec3 PhongShading(in vec3 diffuseColor,in int sampleLod,in vec3 samplePos,in vec3 viewDirection){
+    vec3 N;
+    float x1,x2;
+    int sampleLodT = 1 << sampleLod;
+    float voxel = volumeInfoUBO.voxel * sampleLodT;
+    int ret;
+    float scalar;
+    int miss = 0;
+    VirtualSample(sampleLod,samplePos,scalar);
+    ret = VirtualSample(sampleLod,samplePos+vec3(voxel,0.f,0.f),x1);
+    if(ret == 0){
+        x1 = scalar;
+        miss += 1;
+    }
+    ret = VirtualSample(sampleLod,samplePos+vec3(-voxel,0.f,0.f),x2);
+    if(ret == 0){
+        x2 = scalar;
+        miss += 1;
+    }
+    N.x = x1 - x2;
+    ret = VirtualSample(sampleLod,samplePos+vec3(0.f,voxel,0.f),x1);
+    if(ret == 0){
+        x1 = scalar;
+        miss += 1;
+    }
+    ret = VirtualSample(sampleLod,samplePos+vec3(0.f,-voxel,0.f),x2);
+    if(ret == 0){
+        x2 = scalar;
+        miss += 1;
+    }
+    N.y = x1 - x2;
+    VirtualSample(sampleLod,samplePos+vec3(0.f,0.f,voxel),x1);
+    if(ret == 0){
+        x1 = scalar;
+        miss += 1;
+    }
+    VirtualSample(sampleLod,samplePos+vec3(0.f,0.f,-voxel),x2);
+    if(ret == 0){
+        x2 = scalar;
+        miss += 1;
+    }
+    N.z = x1 - x2;
+    if(miss == 6 ){
+        N = - viewDirection;
+    }
+    else{
+        N = -normalize(N);
+    }
+    vec3 ambient = 0.05f * diffuseColor;
+    vec3 diffuse = max(dot(N,-viewDirection),0.f) * diffuseColor;
+    return ambient + diffuse;
+}
 void main() {
     vec3 ray_entry_pos = subpassLoad(RayEntry).xyz;
     vec3 ray_exit_pos = subpassLoad(RayExit).xyz;
     vec3 ray_entry_to_exit = ray_exit_pos - ray_entry_pos;
     vec3 ray_direction = normalize(ray_entry_to_exit);
-    float ray_max_cast_dist = min(renderParams.ray_dist,dot(ray_entry_to_exit,ray_direction));
-    int ray_max_cast_steps = int(ray_max_cast_dist / renderParams.ray_step);
+    if(!InsideVolume(ray_entry_pos)){
+        vec2 t = IntersectWithAABB(vec3(0.f),volumeInfoUBO.volume_board.xyz,ray_entry_pos,1.f/ray_direction);
+        if(t.x >= 0.f){
+            ray_entry_pos += ray_direction * t.x * 1.01f;
+            ray_entry_to_exit = ray_exit_pos - ray_entry_pos;
+        }
+    }
 
+    float ray_max_cast_dist_from_entry = dot(ray_entry_to_exit,ray_direction);
+    int ray_max_cast_steps_from_entry = int(ray_max_cast_dist_from_entry / renderParams.ray_step);
+    float ray_max_cast_dist_from_view = min(renderParams.ray_dist,dot(ray_direction,ray_exit_pos-renderParams.view_pos));
     vec4 accumelate_color = vec4(0.f);
 
     vec3 ray_cast_pos = ray_entry_pos;//not camera pos if outside volume
@@ -162,9 +228,9 @@ void main() {
 
 
 
-    for(int i = 0; i < ray_max_cast_steps; i++){
-        float ray_cast_dist = dot(ray_cast_pos-ray_entry_pos,ray_direction);
-        if(ray_cast_dist > ray_max_cast_dist){
+    for(int i = 0; i < ray_max_cast_steps_from_entry; i++){
+        float ray_cast_dist_from_view = dot(ray_cast_pos-renderParams.view_pos,ray_direction);
+        if(ray_cast_dist_from_view > ray_max_cast_dist_from_view){
             break;
         }
         int cur_sample_lod = ComputeCurrentSampleLod(ray_cast_pos);
@@ -180,23 +246,18 @@ void main() {
         int ret = VirtualSample(cur_sample_lod,ray_cast_pos,sample_scalar);
 
         if(ret == 0){ // 该块没找到 可以进行跳过
-            //accumelate_color = vec4(1.f,1.f,1.f,1.f);
-            //break;
+            if(!InsideVolume(ray_cast_pos)) break;
             vec3 ray_skip_pos = GetRayExitPos(ray_direction,ray_cast_pos,cur_sample_lod);
             float skip_pos_dist = dot(ray_skip_pos-ray_cast_pos,ray_direction);
-            float max_skip_dist = min(renderParams.lod_dist[cur_sample_lod] - ray_cast_dist, skip_pos_dist);
+            float max_skip_dist = min(renderParams.lod_dist[cur_sample_lod] - ray_cast_dist_from_view, skip_pos_dist);
             ray_cast_pos += ray_direction * max_skip_dist;
 
-            //continue;
-        }
-        else if(ret == 2){
-
-            return;
         }
 
         if(sample_scalar > 0.f){
             vec4 sample_color = texture(TransferTable,sample_scalar);
             if(sample_color.w > 0.f){
+                sample_color.rgb = PhongShading(sample_color.rgb,cur_sample_lod,ray_cast_pos,ray_direction);
                 accumelate_color += sample_color * vec4(sample_color.aaa,1.f) * (1.f - accumelate_color.a);
                 if(accumelate_color.a > 0.99f){
                     break;
@@ -207,8 +268,8 @@ void main() {
         ray_cast_pos = last_lod_sample_pos + (i + 1 - last_lod_sample_steps) * ray_direction * cur_sample_step;
 
     }
-//    oFragColor = vec4(ray_direction,1.f);
-//    return;
+
     if(accumelate_color.a == 0.f) discard;
-    oFragColor = accumelate_color;
+    oFragColor.rgb = pow(accumelate_color.rgb,vec3(1.0/2.2));
+    oFragColor.a = 1.0;
 }

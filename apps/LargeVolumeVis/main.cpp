@@ -100,18 +100,19 @@ void RunRenderLoop(bool async){
 
     volume_renderer->setVolume(volume);
 
-    const int frame_w = 1280;
-    const int frame_h = 720;
+    const int frame_w = 960;
+    const int frame_h = 480;
     if(!InitWindowContext(frame_w,frame_h)){
         LOG_ERROR("init window context failed");
         throw std::runtime_error("Init window context failed");
     }
 
     CameraExt camera{};
-    camera.position = {5.52f,5.52f,7.9f};
-    camera.target = {5.52f,5.52f,7.f};
+    camera.position = {5.3f,5.53f,8.6f};
+    camera.target = {5.3f,5.53f,6.1f};
     camera.front = {0.f,0.f,-1.f};
     camera.up = {0.f,1.f,0.f};
+    camera.right = {1.f,0.f,0.f};
     camera.near_z = 0.001f;
     camera.far_z = 6.f;
     camera.width = frame_w;
@@ -122,8 +123,8 @@ void RunRenderLoop(bool async){
     camera.fov = 40.f;
 
     TransferFunctionExt1D transferFunctionExt1D{};
-    transferFunctionExt1D.points.emplace_back(0.25f,Vector4f{1.f,0.f,0.f,0.f});
-    transferFunctionExt1D.points.emplace_back(0.6f,Vector4f{0.f,1.f,0.f,1.f});
+    transferFunctionExt1D.points.emplace_back(0.25f,Vector4f{0.f,1.f,0.5f,0.f});
+    transferFunctionExt1D.points.emplace_back(0.6f,Vector4f{1.f,0.5f,0.f,1.f});
     ComputeTransferFunction1DExt(transferFunctionExt1D);
     volume_renderer->setTransferFunction(transferFunctionExt1D);
 
@@ -430,6 +431,26 @@ void RunRenderLoop(bool async){
                   camera.target = camera.position + camera.front;
                   break;
               }
+              case SDLK_a:{
+                  camera.position -= camera.right * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_d:{
+                  camera.position += camera.right * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_q:{
+                  camera.position += camera.up * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_e:{
+                  camera.position -= camera.up * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
               }
               break;
           }
@@ -525,22 +546,23 @@ void RunRenderPassLoop(){
         gpu_resource.createGPUResource(desc);
     const int gpu_resource_block_limit = 10 * 8;
 
-    auto volume_renderer = RendererCaster<Renderer::VOLUME_EXT>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME));
+    auto volume_renderer = RendererCaster<Renderer::VOLUME_EXT>::GetPtr(gpu_resource.getRenderer(Renderer::VOLUME_EXT));
 
     volume_renderer->setVolume(volume);
 
-    const int frame_w = 1280;
-    const int frame_h = 720;
+    const int frame_w = 960;
+    const int frame_h = 480;
     if(!InitWindowContext(frame_w,frame_h)){
         LOG_ERROR("init window context failed");
         throw std::runtime_error("Init window context failed");
     }
 
     CameraExt camera{};
-    camera.position = {5.52f,5.52f,7.9f};
-    camera.target = {5.52f,5.52f,7.f};
+    camera.position = {5.3f,5.53f,8.6f};
+    camera.target = {5.3f,5.53f,6.1f};
     camera.front = {0.f,0.f,-1.f};
     camera.up = {0.f,1.f,0.f};
+    camera.right = {1.f,0.f,0.f};
     camera.near_z = 0.001f;
     camera.far_z = 6.f;
     camera.width = frame_w;
@@ -551,11 +573,10 @@ void RunRenderPassLoop(){
     camera.fov = 40.f;
 
     TransferFunctionExt1D transferFunctionExt1D{};
-    transferFunctionExt1D.points.emplace_back(0.25f,Vector4f{1.f,0.f,0.f,0.f});
-    transferFunctionExt1D.points.emplace_back(0.6f,Vector4f{0.f,1.f,0.f,1.f});
+    transferFunctionExt1D.points.emplace_back(0.25f,Vector4f{0.f,1.f,0.5f,0.f});
+    transferFunctionExt1D.points.emplace_back(0.6f,Vector4f{1.f,0.5f,0.f,1.f});
     ComputeTransferFunction1DExt(transferFunctionExt1D);
     volume_renderer->setTransferFunction(transferFunctionExt1D);
-
 
 
     auto volume_render = [&]()->const Image&{
@@ -604,6 +625,22 @@ void RunRenderPassLoop(){
 
             auto& cur_lod_intersect_blocks = lod_intersect_blocks[cur_lod];
             std::queue<Volume::BlockIndex> cur_working_blocks;
+            auto computeStartBlock = [&](int cur_lod){
+                auto &pos = renderer_camera.position;
+                float min_dist = std::numeric_limits<float>::max();
+                Volume::BlockIndex start_block;
+                for (auto &b : lod_intersect_blocks[cur_lod])
+                {
+                    auto dist = VolumeHelper::ComputeDistanceToBlockCenter(volume, b, pos);
+                    if (min_dist > dist)
+                    {
+                        min_dist = dist;
+                        start_block = b;
+                    }
+                }
+                assert(start_block.isValid());
+                cur_working_blocks.push(start_block);
+            };
             if(cur_lod == min_lod){
                 if(VolumeHelper::VolumeSpacePositionInsideVolume(volume,renderer_camera.position)){
                     auto start_block = VolumeHelper::GetBlockIndexByVolumeSpacePosition(volume,renderer_camera.position,cur_lod);
@@ -612,42 +649,44 @@ void RunRenderPassLoop(){
                 }
                 else{
                     //find nearest block
-                    auto& pos = renderer_camera.position;
-                    float min_dist = std::numeric_limits<float>::max();
-                    Volume::BlockIndex start_block;
-                    for(auto&b : lod_intersect_blocks[min_lod]){
-                        auto dist = VolumeHelper::ComputeDistanceToBlockCenter(volume,b,pos);
-                        if(min_dist > dist){
-                            min_dist = dist;
-                            start_block = b;
-                        }
-                    }
-                    assert(block.isValid());
-                    cur_working_blocks.push(start_block);
+                    computeStartBlock(cur_lod);
                 }
             }
             else{
-                for(auto& b:next_lod_working_blocks){
-                    cur_working_blocks.push(b);
+                if(next_lod_working_blocks.empty()){
+                    computeStartBlock(cur_lod);
                 }
-                next_lod_working_blocks.clear();
+                else{
+                    for(auto& b:next_lod_working_blocks){
+                        cur_working_blocks.push(b);
+                    }
+                    next_lod_working_blocks.clear();
+                }
             }
             while(!cur_lod_intersect_blocks.empty()){
-                assert(!cur_working_blocks.empty());
+                if(cur_working_blocks.empty()){
+                    computeStartBlock(cur_lod);
+                    LOG_INFO("cur_lod: {}, intersect_blocks count: {}",cur_lod,cur_lod_intersect_blocks.size());
+//                    throw std::runtime_error("cur_working_blocks get empty");
+                }
                 // clear cur working blocks in lod intersect blocks
                 std::queue<Volume::BlockIndex> tmp;
+                LOG_INFO("lod {} has block count {}",cur_lod,cur_working_blocks.size());
                 while (!cur_working_blocks.empty())
                 {
+                    LOG_INFO("lod {} block : {} {} {}",cur_lod,cur_working_blocks.front().x,
+                             cur_working_blocks.front().y,cur_working_blocks.front().z);
                     cur_lod_intersect_blocks.erase(cur_working_blocks.front());
                     tmp.push(cur_working_blocks.front());
                     cur_working_blocks.pop();
                 }
                 cur_working_blocks = std::move(tmp);
+
                 // evaluate cur working blocks whether large than gpu limit
                 // perform render task
                 auto &page_table = gpu_resource.getPageTable();
                 auto dummy_cur_working_blocks = cur_working_blocks;
-                while (cur_working_blocks.size() > page_table.getAvailableCount())
+                do
                 {
                     int batch_count = page_table.getAvailableCount();
                     if (batch_count == 0)
@@ -663,6 +702,7 @@ void RunRenderPassLoop(){
                     std::vector<Volume::BlockIndex> missed_blocks;
                     std::vector<Renderer::PageTableItem> cur_renderer_page_table;
                     page_table.acquireLock();
+                    //must check if same blocks are queried
                     auto query_ret = page_table.queriesAndLockExt(cur_batch_working_blocks);
                     for (const auto &ret : query_ret)
                     {
@@ -724,14 +764,19 @@ void RunRenderPassLoop(){
                         }
                         else
                         {
+                            //1.ray terminate early because of alpha > 0.99
+                            //2.view frustum space is bigger than ray cast space
                             LOG_ERROR("renderPass return true but render is not finished!");
                         }
                     }
-                }
+                    for(const auto& item:cur_renderer_page_table){
+                        page_table.release(item.second);
+                    }
+                }while (cur_working_blocks.size() > page_table.getAvailableCount());
 
                 // compute next renderPass blocks
                 cur_working_blocks = std::move(dummy_cur_working_blocks);
-                std::queue<Volume::BlockIndex> next_working_blocks;
+                std::set<Volume::BlockIndex> next_working_blocks;
                 while (!cur_working_blocks.empty())
                 {
                     auto block = cur_working_blocks.front();
@@ -744,31 +789,35 @@ void RunRenderPassLoop(){
                     // find if in lod_intersect_blocks
                     for (auto &b : neighbor_blocks)
                     {
+                        //check current lod
                         if (cur_lod_intersect_blocks.count(b) == 1)
                         {
-                            next_working_blocks.push(b);
-                            cur_lod_intersect_blocks.erase(b);
+                            next_working_blocks.insert(b);
+//                            cur_lod_intersect_blocks.erase(b);
                         }
-                        else
-                        {
-                            if (next_lod == -1)
-                                continue;
-                            // check if next lod of b exists
-                            Volume::BlockIndex next_lod_b = VolumeHelper::GetNextLodBlockIndex(b);
+                        //check next lod
+                        if (next_lod == -1)
+                            continue;
+                        // check if next lod of b exists
+                        // this is may be wrong because lod change not consecutive
+                        Volume::BlockIndex next_lod_b = VolumeHelper::GetLodBlockIndex(b,next_lod);
 
-                            if (lod_intersect_blocks[next_lod].count(next_lod_b) == 1)
-                            {
-                                next_lod_working_blocks.insert(next_lod_b);
-                            }
+                        if (lod_intersect_blocks[next_lod].count(next_lod_b) == 1)
+                        {
+                            next_lod_working_blocks.insert(next_lod_b);
                         }
-                    }
-                    cur_working_blocks = std::move(next_working_blocks);
+
+                    }//end of checking neighbor blocks
+                }
+                for(auto& b:next_working_blocks){
+                    cur_working_blocks.push(b);
                 }
                 //end of renderPass a level of BFS for the lod
             }
             LOG_INFO("lod {} has finish renderPass",cur_lod);
         }
         LOG_INFO("finish render a frame");
+        return volume_renderer->getFrameBuffers().getColors();
     };
 
     bool exit = false;
@@ -803,6 +852,26 @@ void RunRenderPassLoop(){
               }
               case SDLK_s:{
                   camera.position -= camera.front * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_a:{
+                  camera.position -= camera.right * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_d:{
+                  camera.position += camera.right * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_q:{
+                  camera.position += camera.up * 0.01f;
+                  camera.target = camera.position + camera.front;
+                  break;
+              }
+              case SDLK_e:{
+                  camera.position -= camera.up * 0.01f;
                   camera.target = camera.position + camera.front;
                   break;
               }
@@ -864,7 +933,7 @@ void RunRenderPassLoop(){
     LOG_INFO("exit main render loop");
 }
 int main(int argc,char** argv){
-    SET_LOG_LEVEL_DEBUG
+    SET_LOG_LEVEL_INFO
     std::stringstream ss;
     ss << "usage:"
           "\n\t0 RunAsyncRenderLoop"

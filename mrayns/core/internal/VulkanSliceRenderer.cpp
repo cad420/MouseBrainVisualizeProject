@@ -9,6 +9,7 @@
 #include "Common.hpp"
 #include "../../Utils/Timer.hpp"
 #include "../../algorithm/SliceHelper.hpp"
+#undef DEBUG_WINDOW
 MRAYNS_BEGIN
 
 namespace internal{

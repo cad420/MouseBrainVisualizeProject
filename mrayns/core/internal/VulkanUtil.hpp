@@ -56,8 +56,8 @@ struct VulkanRendererResourceWrapper
     //shared for same type renderer but not shared with each other
     //some static resource for the type of renderer
 
-    inline static int DefaultFrameWidth = 1280;
-    inline static int DefaultFrameHeight = 720;
+    inline static int DefaultFrameWidth = 960;
+    inline static int DefaultFrameHeight = 540;
 
 
 //    VkCommandPool graphicsPool;//should use for transfer page table and proxy cube data

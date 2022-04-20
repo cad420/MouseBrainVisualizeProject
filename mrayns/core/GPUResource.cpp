@@ -87,6 +87,9 @@ struct GPUResource::Impl{
             else if(type == Renderer::SLICE){
                 renderer = RendererPtr(internal::VulkanSliceRenderer::Create(node_vulkan_res.get()));
             }
+            else if(type == Renderer::VOLUME_EXT){
+                renderer = RendererPtr(internal::VulkanVolumeRendererExt::Create(node_vulkan_res.get()));
+            }
             else{
                 LOG_ERROR("renderer type not supported!");
                 return false;
@@ -257,11 +260,15 @@ struct GPUResource::Impl{
         auto validationLayers = internal::getValidationLayers();
         auto deviceExtensions = internal::getRequiredDeviceExtensions();
 
+        VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.fragmentStoresAndAtomics = VK_TRUE;
+
         VkDeviceQueueCreateInfo queueCreateInfos[2]={transferQueueCreateInfo,graphicsQueueCreateInfo};
         VkDeviceCreateInfo deviceCreateInfo{};
         deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         deviceCreateInfo.queueCreateInfoCount = 2;
         deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
+        deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
         deviceCreateInfo.enabledExtensionCount = deviceExtensions.size();
         deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
         deviceCreateInfo.enabledLayerCount = validationLayers.size();

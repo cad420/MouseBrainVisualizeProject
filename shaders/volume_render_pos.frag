@@ -14,7 +14,7 @@ void main() {
     bool inner = viewPos.view_pos.w == 1.f;
     if(gl_FrontFacing){
         if(inner){
-            oEntryPos = viewPos.view_pos;
+            oEntryPos =  vec4(0.f);//inner must has back face fragement
         }
         else{
             oEntryPos = vec4(iFragPos,1.f);
