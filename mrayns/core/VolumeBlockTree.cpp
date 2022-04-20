@@ -237,7 +237,7 @@ std::vector<Volume::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(ViewS
         return VolumeRendererLodDist::MaxLod - 1;
     };
     std::vector<OctTree::OctNode*> leaves;
-    leaves.reserve(64);
+    leaves.reserve(1024);
     std::unordered_set<OctTree::OctNode*> res;
     std::queue<OctTree::OctNode*> q;
     q.push(oct_tree.root);
@@ -246,8 +246,7 @@ std::vector<Volume::BlockIndex> VolumeBlockTreeImpl::computeIntersectBlock(ViewS
         auto t = q.front();
         assert(t);
         q.pop();
-
-        if(GeometryHelper::GetBoxVisibility(viewSpace,t->box) == BoxVisibility::Intersecting)
+        if(GeometryHelper::GetBoxVisibility(viewSpace,t->box) != BoxVisibility::Invisible)
         {
             if(t->level == 0)//is leaf
             {
@@ -294,7 +293,7 @@ std::vector<VolumeBlockTreeImpl::BlockIndex> VolumeBlockTreeImpl::computeInterse
         auto p = q.front();
         q.pop();
         if(!p) continue;
-        if(GeometryHelper::GetBoxVisibility(std::forward<T>(t),p->box) == BoxVisibility::Intersecting){
+        if(GeometryHelper::GetBoxVisibility(std::forward<T>(t),p->box) != BoxVisibility::Invisible){
             if(p->level == level){
                 intersect_blocks.emplace_back(p->index);
             }

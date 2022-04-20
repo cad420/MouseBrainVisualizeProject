@@ -23,16 +23,30 @@ struct VolumeHelper{
             return block_index.x >=0 && block_index.y >= 0 && block_index.z >= 0
                    && block_index.x < lod_block_dim.x && block_index.y < lod_block_dim.y && block_index.z < lod_block_dim.z;
         };
-        static Vector3i neighbors[6] = {
+        static Vector3i neighbors[] = {
             {-1,0,0},
             {1,0,0},
             {0,-1,0},
             {0,1,0},
             {0,0,-1},
-            {0,0,1}
+            {0,0,1},
+            {-1,-1,0},
+            {-1,1,0},
+            {1,-1,0},
+            {1,1,0},
+            {-1,0,-1},
+            {-1,0,1},
+            {1,0,-1},
+            {1,0,1},
+            {0,-1,-1},
+            {0,-1,1},
+            {0,1,1},
+            {0,1,-1}
         };
+        static int count = sizeof(neighbors) / sizeof(Vector3i);
         Vector3i block_index = {blockIndex.x,blockIndex.y,blockIndex.z};
-        for(int i = 0; i < 6; i++){
+
+        for(int i = 0; i < count; i++){
             auto n_block_index = block_index + neighbors[i];
             if(isValidBlock(n_block_index)){
                 neighborBlocks.emplace_back(n_block_index.x,n_block_index.y,n_block_index.z,lod);
